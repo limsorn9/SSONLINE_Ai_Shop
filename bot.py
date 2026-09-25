@@ -165,10 +165,16 @@ def handle_topup(message):
     msg = (f"🏦 **របៀបបញ្ចូលលុយ (Binance Pay) ៖**\n\n"
            f"បងអាចបញ្ចូលលុយបាន ២ របៀប៖\n"
            f"1️⃣ **បាញ់តាម Binance ID:** `832944944`\n"
-           f"2️⃣ **ឬ Scan QR Code:** (សុំ QR Code ពី Admin)\n\n"
+           f"2️⃣ **ឬ Scan QR Code ខាងលើ**\n\n"
            f"📸 ពេលបាញ់រួច សូមថតវិក័យប័ត្រ (Screenshot)\n"
            f"រួចផ្ញើ (Upload) រូបនោះចូលមកក្នុង Bot នេះផ្ទាល់ នោះ Admin នឹងទទួលបាន និងបញ្ជូលលុយឲ្យបងភ្លាម!")
-    temp_send_message(message.chat.id, msg, parse_mode="Markdown")
+           
+    try:
+        with open('qr_binance.png', 'rb') as photo:
+            msg_obj = bot.send_photo(message.chat.id, photo, caption=msg, parse_mode="Markdown")
+            threading.Timer(60.0, delete_msg, args=(message.chat.id, msg_obj.message_id)).start()
+    except:
+        temp_send_message(message.chat.id, msg, parse_mode="Markdown")
 
 @bot.message_handler(content_types=['photo'])
 def handle_receipt_photo(message):
