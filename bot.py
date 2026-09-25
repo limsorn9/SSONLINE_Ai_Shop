@@ -194,11 +194,19 @@ def handle_category_commands(message):
     for p in filtered_products:
         p_id = p.get('id')
         name = p.get('name')
-        price = float(p.get('price', 0))
+        original_price = float(p.get('price', 0))
         stock = p.get('stock', 0)
         
-        # TODO: បន្ថែមរូបមន្តគណនាតម្លៃលក់ចេញនៅទីនេះ បើបងចង់បាន
-        sell_price = price 
+        if original_price < 1:
+            sell_price = original_price * 5.0
+        elif 1 <= original_price < 5:
+            sell_price = original_price * 3.0
+        elif 5 <= original_price <= 10:
+            sell_price = original_price * 2.5
+        elif 10 < original_price <= 50:
+            sell_price = original_price * 2.0 * 0.9
+        else:
+            sell_price = original_price * 2.0 * 0.8
         
         list_text += f"👉 /buy\_{p_id} : 📦 {name} | 💵 **${sell_price:.2f}** | 📦 {stock}\n"
         
@@ -240,7 +248,16 @@ def handle_buy_command(message):
         return
         
     original_price = float(target_product.get('price', 0))
-    sell_price = original_price # TODO: កែប្រែរូបមន្តតម្លៃ
+    if original_price < 1:
+        sell_price = original_price * 5.0
+    elif 1 <= original_price < 5:
+        sell_price = original_price * 3.0
+    elif 5 <= original_price <= 10:
+        sell_price = original_price * 2.5
+    elif 10 < original_price <= 50:
+        sell_price = original_price * 2.0 * 0.9
+    else:
+        sell_price = original_price * 2.0 * 0.8
     
     # 2. កាត់លុយ
     if user_id != ADMIN_ID:
