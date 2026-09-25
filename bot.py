@@ -127,8 +127,30 @@ def call_zoom_api(method, endpoint, json_data=None, extra_headers=None):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    from telebot.types import ReplyKeyboardRemove
-    bot.send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ SSONLINE AI SHOP Bot!\n\n👉 សូមចុចលើប៊ូតុង **Menu** ពណ៌ខៀវនៅខាងក្រោមឆ្វេង ដើម្បីចាប់ផ្តើម!", reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
+    from telebot.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("🛒 មើលទំនិញ (Shop)", callback_data="cmd_shop"), 
+               InlineKeyboardButton("👤 គណនី (Info)", callback_data="cmd_info"))
+    markup.row(InlineKeyboardButton("🏦 បញ្ចូលប្រាក់ (Topup)", callback_data="cmd_topup"))
+    
+    # We still send ReplyKeyboardRemove just in case they had the old big keyboard stuck
+    bot.send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ SSONLINE AI SHOP Bot!\n\n👉 សូមចុចលើប៊ូតុងខាងក្រោម ដើម្បីចាប់ផ្តើម៖", reply_markup=markup, parse_mode="Markdown")
+    # Also send a hidden message to remove the old big keyboard if it exists
+    msg = bot.send_message(message.chat.id, "កំពុងរៀបចំប្រព័ន្ធ...", reply_markup=ReplyKeyboardRemove())
+    bot.delete_message(message.chat.id, msg.message_id)
+
+@bot.callback_query_handler(func=lambda call: call.data in ["cmd_shop", "cmd_info", "cmd_topup"])
+def handle_inline_menu(call):
+    bot.answer_callback_query(call.id)
+    # Simulate a message object
+    call.message.from_user = call.from_user
+    if call.data == "cmd_shop":
+        call.message.text = "/shop"
+        show_shop(call.message)
+    elif call.data == "cmd_info":
+        show_info(call.message)
+    elif call.data == "cmd_topup":
+        handle_topup(call.message)
 
 @bot.message_handler(func=lambda m: m.text == "👤 គណនី (Info)" or m.text == "/info")
 def show_info(message):
