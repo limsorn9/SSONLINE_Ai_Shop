@@ -153,6 +153,17 @@ def show_info(message):
                f"3️⃣ ភ្ជាប់ជាមួយលេខ ID របស់អ្នក (`{user_id}`) ឲ្យ Admin ដើម្បីបញ្ចូលលុយចូលកាបូប!")
     temp_send_message(message.chat.id, msg, parse_mode="Markdown")
 
+@bot.message_handler(commands=['topup'])
+def handle_topup(message):
+    user_id = message.from_user.id
+    msg = (f"🏦 **របៀបបញ្ចូលលុយ (Binance Pay) ៖**\n\n"
+           f"បងអាចបញ្ចូលលុយបាន ២ របៀប៖\n"
+           f"1️⃣ **បាញ់តាម Binance ID:** `832944944`\n"
+           f"2️⃣ **ឬ Scan QR Code:** (សុំ QR Code ពី Admin)\n\n"
+           f"📸 ពេលបាញ់រួច សូមថតវិក័យប័ត្រ (Screenshot)\n"
+           f"រួចផ្ញើមកកាន់ Admin ដោយភ្ជាប់ជាមួយលេខ ID របស់អ្នក គឺ (`{user_id}`) នោះ Admin នឹងបញ្ចូលលុយចូលកាបូបឲ្យបងភ្លាម!")
+    temp_send_message(message.chat.id, msg, parse_mode="Markdown")
+
 @bot.message_handler(func=lambda m: m.text == "🛒 មើលទំនិញ (Shop)" or m.text == "/shop")
 def show_shop(message):
     msg = (f"📂 **សូមជ្រើសរើសប្រភេទប្រព័ន្ធទំនិញ៖**\n\n"
@@ -419,6 +430,7 @@ def set_bot_commands():
         BotCommand("start", "ចាប់ផ្តើមប្រើប្រាស់ Bot ឡើងវិញ"),
         BotCommand("shop", "មើលបញ្ជីទំនិញទាំងអស់"),
         BotCommand("info", "មើលព័ត៌មានគណនី និងលុយ"),
+        BotCommand("topup", "របៀបបញ្ចូលទឹកប្រាក់ (Binance)"),
         BotCommand("1", "🤖 AI Tools (ChatGPT, Claude...)"),
         BotCommand("2", "🌐 VPN & Network"),
         BotCommand("3", "💻 Developer Tools"),
