@@ -127,9 +127,8 @@ def call_zoom_api(method, endpoint, json_data=None, extra_headers=None):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    markup = ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row(KeyboardButton("🛒 មើលទំនិញ (Shop)"), KeyboardButton("👤 គណនី (Info)"))
-    bot.send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ SSONLINE AI SHOP Bot!\n\n👉 សូមចុចលើប៊ូតុងខាងក្រោម ដើម្បីចាប់ផ្តើម!", reply_markup=markup, parse_mode="Markdown")
+    from telebot.types import ReplyKeyboardRemove
+    bot.send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ SSONLINE AI SHOP Bot!\n\n👉 សូមចុចលើប៊ូតុង **Menu** ពណ៌ខៀវនៅខាងក្រោមឆ្វេង ដើម្បីចាប់ផ្តើម!", reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "👤 គណនី (Info)" or m.text == "/info")
 def show_info(message):
