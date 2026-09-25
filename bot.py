@@ -266,6 +266,9 @@ def handle_category_commands(message):
         temp_send_message(message.chat.id, "❌ មិនមានទំនិញក្នុងប្រភេទនេះទេនៅពេលនេះ។")
         return
 
+    # Sort products alphabetically by name
+    filtered_products.sort(key=lambda x: x.get('name', '').lower())
+
     list_text = ""
     for p in filtered_products:
         p_id = p.get('id')
