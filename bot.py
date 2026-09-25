@@ -132,7 +132,35 @@ def show_info(message):
 
 @bot.message_handler(func=lambda m: m.text == "🛒 មើលទំនិញ (Shop)" or m.text == "/shop")
 def show_shop(message):
-    bot.send_message(message.chat.id, "កំពុងទាញយកទិន្នន័យទំនិញពី Zoom Store... ⏳")
+    msg = (f"📂 **សូមជ្រើសរើសប្រភេទប្រព័ន្ធទំនិញ៖**\n\n"
+           f"👉 /1 : 🤖 AI Tools (ChatGPT, Claude, Gemini...)\n"
+           f"👉 /2 : 🌐 VPN & Network\n"
+           f"👉 /3 : 💻 Developer Tools (API, Replit, GitHub...)\n"
+           f"👉 /4 : 🎬 Media & Streaming (CapCut, YouTube, Netflix...)\n"
+           f"👉 /5 : 🎨 Design & Office (Canva, Figma, Microsoft...)\n"
+           f"👉 /6 : 📦 ផ្សេងៗ (Others)")
+    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+
+@bot.message_handler(commands=['1', '2', '3', '4', '5', '6'])
+@bot.message_handler(func=lambda message: message.text in ['1', '2', '3', '4', '5', '6'])
+def handle_category_commands(message):
+    cmd = message.text.strip()
+    if not cmd.startswith('/'):
+        cmd = '/' + cmd
+        
+    category_map = {
+        "/1": {"name": "🤖 AI Tools", "keywords": ["chatgpt", "gpt", "claude", "gemini", "grok", "ai", "perplexity", "heygen", "gamma", "bolt", "lovable"]},
+        "/2": {"name": "🌐 VPN & Network", "keywords": ["vpn", "express", "proxy", "ip"]},
+        "/3": {"name": "💻 Developer Tools", "keywords": ["api", "replit", "github", "cursor", "warp", "supabase", "posthog", "linear", "framer"]},
+        "/4": {"name": "🎬 Media & Streaming", "keywords": ["capcut", "youtube", "netflix", "spotify", "descript"]},
+        "/5": {"name": "🎨 Design & Office", "keywords": ["canva", "figma", "microsoft", "office", "autodesk", "notion"]},
+        "/6": {"name": "📦 ផ្សេងៗ (Others)", "keywords": []} # Catch-all
+    }
+    
+    selected_cat = category_map.get(cmd)
+    if not selected_cat: return
+    
+    bot.send_message(message.chat.id, f"កំពុងទាញយកទិន្នន័យទំនិញសម្រាប់ **{selected_cat['name']}**... ⏳", parse_mode="Markdown")
     
     res = call_zoom_api("GET", "/products")
     products = res.get('products', [])
@@ -141,8 +169,29 @@ def show_shop(message):
         bot.send_message(message.chat.id, "❌ មិនមានទំនិញលក់ទេនៅពេលនេះ!")
         return
         
+    filtered_products = []
+    if cmd == "/6":
+        # រកទំនិញដែលមិនចូលក្នុង Category ទី 1 ដល់ 5
+        all_keywords = []
+        for k, v in category_map.items():
+            if k != "/6": all_keywords.extend(v["keywords"])
+            
+        for p in products:
+            name_lower = p.get('name', '').lower()
+            if not any(kw in name_lower for kw in all_keywords):
+                filtered_products.append(p)
+    else:
+        for p in products:
+            name_lower = p.get('name', '').lower()
+            if any(kw in name_lower for kw in selected_cat["keywords"]):
+                filtered_products.append(p)
+                
+    if not filtered_products:
+        bot.send_message(message.chat.id, "❌ មិនមានទំនិញក្នុងប្រភេទនេះទេនៅពេលនេះ។")
+        return
+
     list_text = ""
-    for p in products:
+    for p in filtered_products:
         p_id = p.get('id')
         name = p.get('name')
         price = float(p.get('price', 0))
@@ -153,8 +202,6 @@ def show_shop(message):
         
         list_text += f"👉 /buy\_{p_id} : 📦 {name} | 💵 **${sell_price:.2f}** | 📦 {stock}\n"
         
-    # Telegram អនុញ្ញាតអក្សរយ៉ាងច្រើន ៤០៩៦ តួអក្សរក្នុងមួយសារ
-    # យើងត្រូវកាត់ផ្តាច់វាបើវាវែងពេក
     messages_to_send = []
     chunk = ""
     lines = list_text.strip().split('\n')
@@ -167,7 +214,7 @@ def show_shop(message):
     if chunk:
         messages_to_send.append(chunk)
         
-    bot.send_message(message.chat.id, f"📂 **បញ្ជីទំនិញទាំងអស់ ({len(products)} មុខ):**", parse_mode="Markdown")
+    bot.send_message(message.chat.id, f"📂 **{selected_cat['name']} ({len(filtered_products)} មុខ):**", parse_mode="Markdown")
     for i, msg in enumerate(messages_to_send):
         if i == len(messages_to_send) - 1:
             msg += "\n📌 *ចុចលើលេខកូដបញ្ជាពណ៌ខៀវខាងលើ ដើម្បីទិញទំនិញ!*"
