@@ -151,10 +151,27 @@ def show_shop(message):
         # TODO: បន្ថែមរូបមន្តគណនាតម្លៃលក់ចេញនៅទីនេះ បើបងចង់បាន
         sell_price = price 
         
-        list_text += f"👉 /buy\_{p_id} : 📦 {name} | 💵 **${sell_price:.2f}** | 📦 ស្តុក: {stock}\n\n"
+        list_text += f"👉 /buy\_{p_id} : 📦 {name} | 💵 **${sell_price:.2f}** | 📦 {stock}\n"
         
-    final_msg = f"📂 **បញ្ជីទំនិញទាំងអស់:**\n\n{list_text}📌 *ចុចលើលេខកូដបញ្ជាពណ៌ខៀវខាងលើ ដើម្បីទិញទំនិញ!*"
-    bot.send_message(message.chat.id, final_msg, parse_mode="Markdown")
+    # Telegram អនុញ្ញាតអក្សរយ៉ាងច្រើន ៤០៩៦ តួអក្សរក្នុងមួយសារ
+    # យើងត្រូវកាត់ផ្តាច់វាបើវាវែងពេក
+    messages_to_send = []
+    chunk = ""
+    lines = list_text.strip().split('\n')
+    for line in lines:
+        if len(chunk) + len(line) + 2 > 4000:
+            messages_to_send.append(chunk)
+            chunk = line + "\n"
+        else:
+            chunk += line + "\n"
+    if chunk:
+        messages_to_send.append(chunk)
+        
+    bot.send_message(message.chat.id, f"📂 **បញ្ជីទំនិញទាំងអស់ ({len(products)} មុខ):**", parse_mode="Markdown")
+    for i, msg in enumerate(messages_to_send):
+        if i == len(messages_to_send) - 1:
+            msg += "\n📌 *ចុចលើលេខកូដបញ្ជាពណ៌ខៀវខាងលើ ដើម្បីទិញទំនិញ!*"
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda message: message.text and message.text.startswith('/buy_'))
 def handle_buy_command(message):
