@@ -411,16 +411,18 @@ def handle_admin_commands(message):
     parts = message.text.split()
     
     if cmd == '/addmoney':
-        if len(parts) == 3: process_add_money(message, parts[1], parts[2])
+        if len(parts) == 3: 
+            process_add_money(message, parts[1], parts[2])
         else:
-            msg = bot.reply_to(message, "📝 សូមបញ្ចូល **[IDភ្ញៀវ]** និង **[ចំនួនលុយ]** ៖", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, lambda m: process_add_money(m, *m.text.split()[:2]) if len(m.text.split())>=2 else temp_reply_to(m,"❌ ខុសទម្រង់"))
+            msg = bot.reply_to(message, "📝 សូមបញ្ចូល **[ID ភ្ញៀវ]** ៖", parse_mode="Markdown")
+            bot.register_next_step_handler(msg, step_addmoney_id)
             
     elif cmd == '/removemoney':
-        if len(parts) == 3: process_remove_money(message, parts[1], parts[2])
+        if len(parts) == 3: 
+            process_remove_money(message, parts[1], parts[2])
         else:
-            msg = bot.reply_to(message, "📝 សូមបញ្ចូល **[IDភ្ញៀវ]** និង **[ចំនួនលុយ]** ដែលត្រូវដក៖", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, lambda m: process_remove_money(m, *m.text.split()[:2]) if len(m.text.split())>=2 else temp_reply_to(m,"❌ ខុសទម្រង់"))
+            msg = bot.reply_to(message, "📝 សូមបញ្ចូល **[ID ភ្ញៀវ]** ដែលត្រូវដកលុយ៖", parse_mode="Markdown")
+            bot.register_next_step_handler(msg, step_removemoney_id)
     elif cmd == '/checkuser':
         if len(parts) == 2: process_checkuser(message, parts[1])
         else:
@@ -432,6 +434,16 @@ def handle_admin_commands(message):
         else:
             msg = bot.reply_to(message, "📝 សូមបញ្ចូល **[IDភ្ញៀវ]** ដើម្បីមើលប្រវត្តិ៖", parse_mode="Markdown")
             bot.register_next_step_handler(msg, lambda m: process_history(m, m.text.strip()))
+
+def step_addmoney_id(message):
+    u_id = message.text.strip()
+    msg = bot.reply_to(message, f"📝 សូមបញ្ចូល **[ចំនួនលុយ]** សម្រាប់ ID `{u_id}`:", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, lambda m: process_add_money(m, u_id, m.text.strip()))
+
+def step_removemoney_id(message):
+    u_id = message.text.strip()
+    msg = bot.reply_to(message, f"📝 សូមបញ្ចូល **[ចំនួនលុយ]** ដែលត្រូវដកពី ID `{u_id}`:", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, lambda m: process_remove_money(m, u_id, m.text.strip()))
 
 def process_add_money(message, u_id, amt):
     try:
