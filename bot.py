@@ -164,11 +164,11 @@ def show_info(message):
         msg = (f"👑 **ព័ត៌មាន Admin:**\n\n"
                f"🆔 **Telegram ID:** `{user_id}`\n"
                f"🏦 **លុយក្នុង Zoom API:** {real_bal:.2f} {currency}\n\n"
-               f"👉 វាយបញ្ជាខាងក្រោមដើម្បីគ្រប់គ្រងអតិថិជន៖\n"
-               f"1. បញ្ចូលលុយ ៖ `/addmoney [ID] [លុយ]`\n"
-               f"2. ដកលុយវិញ ៖ `/removemoney [ID] [លុយ]`\n"
-               f"3. ឆែកលុយភ្ញៀវ៖ `/checkuser [ID]`\n"
-               f"4. ឆែកប្រវត្តិទិញ៖ `/history [ID]`")
+               f"👉 ចុចបញ្ជាខាងក្រោមដើម្បីគ្រប់គ្រងអតិថិជន៖\n"
+               f"1. បញ្ចូលលុយ ៖ /addmoney\n"
+               f"2. ដកលុយវិញ ៖ /removemoney\n"
+               f"3. ឆែកលុយភ្ញៀវ៖ /checkuser\n"
+               f"4. ឆែកប្រវត្តិទិញ៖ /history")
     else:
         balance = get_user_balance(user_id)
         msg = (f"👤 **ព័ត៌មានគណនីរបស់អ្នក:**\n\n"
@@ -221,8 +221,8 @@ def handle_receipt_photo(message):
     # ផ្ញើទៅ Admin
     caption = (f"📥 **មានវិក័យបត្រថ្មីពីភ្ញៀវ!**\n\n"
                f"👤 **ID ភ្ញៀវ:** `{user_id}`\n\n"
-               f"👉 វាយបញ្ជាខាងក្រោមដើម្បីបញ្ចូលលុយ៖\n"
-               f"`/addmoney {user_id} 5` (ប្តូរលេខ 5 ជាចំនួនលុយពិត)")
+               f"👉 ចុចបញ្ជាខាងក្រោមដើម្បីបញ្ចូលលុយ៖\n"
+               f"/addmoney (រួចវាយ ID ភ្ញៀវបញ្ចូលតាមក្រោយ)")
     bot.send_photo(ADMIN_ID, file_id, caption=caption, parse_mode="Markdown")
     
     temp_reply_to(message, "✅ វិក័យបត្ររបស់អ្នកត្រូវបានបញ្ជូនទៅ Admin រួចរាល់។ សូមរង់ចាំបន្តិច!")
