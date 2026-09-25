@@ -52,6 +52,11 @@ def init_db():
                     amount REAL, 
                     description TEXT, 
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS receipts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                    user_id INTEGER, 
+                    file_unique_id TEXT UNIQUE, 
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
 
@@ -161,8 +166,37 @@ def handle_topup(message):
            f"1️⃣ **បាញ់តាម Binance ID:** `832944944`\n"
            f"2️⃣ **ឬ Scan QR Code:** (សុំ QR Code ពី Admin)\n\n"
            f"📸 ពេលបាញ់រួច សូមថតវិក័យប័ត្រ (Screenshot)\n"
-           f"រួចផ្ញើមកកាន់ Admin ដោយភ្ជាប់ជាមួយលេខ ID របស់អ្នក គឺ (`{user_id}`) នោះ Admin នឹងបញ្ចូលលុយចូលកាបូបឲ្យបងភ្លាម!")
+           f"រួចផ្ញើ (Upload) រូបនោះចូលមកក្នុង Bot នេះផ្ទាល់ នោះ Admin នឹងទទួលបាន និងបញ្ជូលលុយឲ្យបងភ្លាម!")
     temp_send_message(message.chat.id, msg, parse_mode="Markdown")
+
+@bot.message_handler(content_types=['photo'])
+def handle_receipt_photo(message):
+    user_id = message.from_user.id
+    if user_id == ADMIN_ID: return # Admin អត់បាច់ផ្ញើវិក័យបត្រទេ
+    
+    file_unique_id = message.photo[-1].file_unique_id
+    file_id = message.photo[-1].file_id
+    
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute("SELECT id FROM receipts WHERE file_unique_id = ?", (file_unique_id,))
+    if c.fetchone():
+        conn.close()
+        temp_reply_to(message, "❌ វិក័យបត្រនេះត្រូវបានផ្ញើរួចម្តងហើយ! សូមកុំផ្ញើដដែលៗ។")
+        return
+        
+    c.execute("INSERT INTO receipts (user_id, file_unique_id) VALUES (?, ?)", (user_id, file_unique_id))
+    conn.commit()
+    conn.close()
+    
+    # ផ្ញើទៅ Admin
+    caption = (f"📥 **មានវិក័យបត្រថ្មីពីភ្ញៀវ!**\n\n"
+               f"👤 **ID ភ្ញៀវ:** `{user_id}`\n\n"
+               f"👉 វាយបញ្ជាខាងក្រោមដើម្បីបញ្ចូលលុយ៖\n"
+               f"`/addmoney {user_id} 5` (ប្តូរលេខ 5 ជាចំនួនលុយពិត)")
+    bot.send_photo(ADMIN_ID, file_id, caption=caption, parse_mode="Markdown")
+    
+    temp_reply_to(message, "✅ វិក័យបត្ររបស់អ្នកត្រូវបានបញ្ជូនទៅ Admin រួចរាល់។ សូមរង់ចាំបន្តិច!")
 
 @bot.message_handler(func=lambda m: m.text == "🛒 មើលទំនិញ (Shop)" or m.text == "/shop")
 def show_shop(message):
