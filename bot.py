@@ -390,8 +390,24 @@ def getMessage():
 def webhook():
     return "Zoom Store Bot is running!", 200
 
+def set_bot_commands():
+    from telebot.types import BotCommand
+    commands = [
+        BotCommand("start", "ចាប់ផ្តើមប្រើប្រាស់ Bot ឡើងវិញ"),
+        BotCommand("shop", "មើលបញ្ជីទំនិញទាំងអស់"),
+        BotCommand("info", "មើលព័ត៌មានគណនី និងលុយ"),
+        BotCommand("1", "🤖 AI Tools (ChatGPT, Claude...)"),
+        BotCommand("2", "🌐 VPN & Network"),
+        BotCommand("3", "💻 Developer Tools"),
+        BotCommand("4", "🎬 Media & Streaming (Capcut...)"),
+        BotCommand("5", "🎨 Design & Office (Canva, Office...)"),
+        BotCommand("6", "📦 ផ្សេងៗ (Others)")
+    ]
+    bot.set_my_commands(commands)
+
 if __name__ == '__main__':
     bot.remove_webhook()
+    set_bot_commands()
     if WEBHOOK_URL:
         bot.set_webhook(url=WEBHOOK_URL + '/' + TELEGRAM_BOT_TOKEN)
     port = int(os.environ.get('PORT', 5000))
