@@ -18,6 +18,28 @@ ADMIN_ID = 240224709 # Default admin ID
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 app = Flask(__name__)
 
+import threading
+
+def delete_msg(chat_id, message_id):
+    try:
+        bot.delete_message(chat_id, message_id)
+    except:
+        pass
+
+def temp_send_message(chat_id, text, **kwargs):
+    msg = bot.send_message(chat_id, text, **kwargs)
+    threading.Timer(60.0, delete_msg, args=(chat_id, msg.message_id)).start()
+    return msg
+
+def temp_reply_to(message, text, **kwargs):
+    msg = bot.reply_to(message, text, **kwargs)
+    threading.Timer(60.0, delete_msg, args=(message.chat.id, msg.message_id)).start()
+    try:
+        threading.Timer(60.0, delete_msg, args=(message.chat.id, message.message_id)).start()
+    except:
+        pass
+    return msg
+
 # ================= ប្រព័ន្ធទិន្នន័យ (Database) =================
 def init_db():
     conn = sqlite3.connect('database.db')
@@ -102,7 +124,7 @@ def call_zoom_api(method, endpoint, json_data=None, extra_headers=None):
 def send_welcome(message):
     markup = ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(KeyboardButton("🛒 មើលទំនិញ (Shop)"), KeyboardButton("👤 គណនី (Info)"))
-    bot.send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ Zoom Store Bot!", reply_markup=markup)
+    temp_send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ Zoom Store Bot!", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "👤 គណនី (Info)" or m.text == "/info")
 def show_info(message):
@@ -128,7 +150,7 @@ def show_info(message):
                f"👛 **ទឹកប្រាក់មាន:** `${balance:.2f}`\n\n"
                f"👉 (សូមទាក់ទង Admin ដើម្បីបញ្ចូលលុយ)")
                
-    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+    temp_send_message(message.chat.id, msg, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "🛒 មើលទំនិញ (Shop)" or m.text == "/shop")
 def show_shop(message):
@@ -139,7 +161,7 @@ def show_shop(message):
            f"👉 /4 : 🎬 Media & Streaming (CapCut, YouTube, Netflix...)\n"
            f"👉 /5 : 🎨 Design & Office (Canva, Figma, Microsoft...)\n"
            f"👉 /6 : 📦 ផ្សេងៗ (Others)")
-    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+    temp_send_message(message.chat.id, msg, parse_mode="Markdown")
 
 @bot.message_handler(commands=['1', '2', '3', '4', '5', '6'])
 @bot.message_handler(func=lambda message: message.text in ['1', '2', '3', '4', '5', '6'])
@@ -160,13 +182,13 @@ def handle_category_commands(message):
     selected_cat = category_map.get(cmd)
     if not selected_cat: return
     
-    bot.send_message(message.chat.id, f"កំពុងទាញយកទិន្នន័យទំនិញសម្រាប់ **{selected_cat['name']}**... ⏳", parse_mode="Markdown")
+    temp_send_message(message.chat.id, f"កំពុងទាញយកទិន្នន័យទំនិញសម្រាប់ **{selected_cat['name']}**... ⏳", parse_mode="Markdown")
     
     res = call_zoom_api("GET", "/products")
     products = res.get('products', [])
     
     if not products:
-        bot.send_message(message.chat.id, "❌ មិនមានទំនិញលក់ទេនៅពេលនេះ!")
+        temp_send_message(message.chat.id, "❌ មិនមានទំនិញលក់ទេនៅពេលនេះ!")
         return
         
     filtered_products = []
@@ -187,7 +209,7 @@ def handle_category_commands(message):
                 filtered_products.append(p)
                 
     if not filtered_products:
-        bot.send_message(message.chat.id, "❌ មិនមានទំនិញក្នុងប្រភេទនេះទេនៅពេលនេះ។")
+        temp_send_message(message.chat.id, "❌ មិនមានទំនិញក្នុងប្រភេទនេះទេនៅពេលនេះ។")
         return
 
     list_text = ""
@@ -222,11 +244,11 @@ def handle_category_commands(message):
     if chunk:
         messages_to_send.append(chunk)
         
-    bot.send_message(message.chat.id, f"📂 **{selected_cat['name']} ({len(filtered_products)} មុខ):**", parse_mode="Markdown")
+    temp_send_message(message.chat.id, f"📂 **{selected_cat['name']} ({len(filtered_products)} មុខ):**", parse_mode="Markdown")
     for i, msg in enumerate(messages_to_send):
         if i == len(messages_to_send) - 1:
             msg += "\n📌 *ចុចលើលេខកូដបញ្ជាពណ៌ខៀវខាងលើ ដើម្បីទិញទំនិញ!*"
-        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+        temp_send_message(message.chat.id, msg, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda message: message.text and message.text.startswith('/buy_'))
 def handle_buy_command(message):
@@ -236,7 +258,7 @@ def handle_buy_command(message):
         return
         
     user_id = message.from_user.id
-    bot.send_message(message.chat.id, "កំពុងដំណើរការទិញ... សូមរង់ចាំ! ⏳")
+    temp_send_message(message.chat.id, "កំពុងដំណើរការទិញ... សូមរង់ចាំ! ⏳")
     
     # 1. ស្វែងរកតម្លៃដើមពី API
     res = call_zoom_api("GET", "/products")
@@ -244,7 +266,7 @@ def handle_buy_command(message):
     
     target_product = next((p for p in products if str(p.get('id')) == product_id), None)
     if not target_product:
-        bot.send_message(message.chat.id, "❌ រកមិនឃើញទំនិញនេះទេ!")
+        temp_send_message(message.chat.id, "❌ រកមិនឃើញទំនិញនេះទេ!")
         return
         
     original_price = float(target_product.get('price', 0))
@@ -263,10 +285,10 @@ def handle_buy_command(message):
     if user_id != ADMIN_ID:
         user_balance = get_user_balance(user_id)
         if user_balance < sell_price:
-            bot.send_message(message.chat.id, f"❌ លុយរបស់អ្នកមិនគ្រប់គ្រាន់ទេ! (មានតែ ${user_balance:.2f})")
+            temp_send_message(message.chat.id, f"❌ លុយរបស់អ្នកមិនគ្រប់គ្រាន់ទេ! (មានតែ ${user_balance:.2f})")
             return
         if not deduct_user_balance(user_id, sell_price, f"ទិញទំនិញ Zoom: {product_id}"):
-            bot.send_message(message.chat.id, "❌ មានបញ្ហាក្នុងការកាត់ប្រាក់!")
+            temp_send_message(message.chat.id, "❌ មានបញ្ហាក្នុងការកាត់ប្រាក់!")
             return
             
     # 3. ធ្វើការបញ្ជាទិញតាម API
@@ -285,7 +307,7 @@ def handle_buy_command(message):
                f"🔑 **ទិន្នន័យរបស់អ្នក:**\n{codes_str}\n\n")
         if user_id != ADMIN_ID:
             msg += f"💰 លុយនៅសល់: `${get_user_balance(user_id):.2f}`"
-        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+        temp_send_message(message.chat.id, msg, parse_mode="Markdown")
     else:
         # បង្វិលលុយវិញ
         if user_id != ADMIN_ID:
@@ -301,7 +323,7 @@ def handle_buy_command(message):
         else:
             err_msg = f"❌ បរាជ័យក្នុងការទិញ! (Code: {error_code})"
             
-        bot.send_message(message.chat.id, err_msg)
+        temp_send_message(message.chat.id, err_msg)
 
 # ================= Admin Commands =================
 # (អក្សរកាត់សម្រាប់ Admin Command ដែលឲ្យចុចវាយបញ្ចូល)
@@ -315,13 +337,13 @@ def handle_admin_commands(message):
         if len(parts) == 3: process_add_money(message, parts[1], parts[2])
         else:
             msg = bot.reply_to(message, "📝 សូមបញ្ចូល **[IDភ្ញៀវ]** និង **[ចំនួនលុយ]** ៖", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, lambda m: process_add_money(m, *m.text.split()[:2]) if len(m.text.split())>=2 else bot.reply_to(m,"❌ ខុសទម្រង់"))
+            bot.register_next_step_handler(msg, lambda m: process_add_money(m, *m.text.split()[:2]) if len(m.text.split())>=2 else temp_reply_to(m,"❌ ខុសទម្រង់"))
             
     elif cmd == '/removemoney':
         if len(parts) == 3: process_remove_money(message, parts[1], parts[2])
         else:
             msg = bot.reply_to(message, "📝 សូមបញ្ចូល **[IDភ្ញៀវ]** និង **[ចំនួនលុយ]** ដែលត្រូវដក៖", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, lambda m: process_remove_money(m, *m.text.split()[:2]) if len(m.text.split())>=2 else bot.reply_to(m,"❌ ខុសទម្រង់"))
+            bot.register_next_step_handler(msg, lambda m: process_remove_money(m, *m.text.split()[:2]) if len(m.text.split())>=2 else temp_reply_to(m,"❌ ខុសទម្រង់"))
     elif cmd == '/checkuser':
         if len(parts) == 2: process_checkuser(message, parts[1])
         else:
@@ -338,27 +360,27 @@ def process_add_money(message, u_id, amt):
     try:
         user_id, amount = int(u_id), float(amt)
         add_user_balance(user_id, amount)
-        bot.reply_to(message, f"✅ បានបញ្ចូលលុយ `${amount:.2f}` ទៅឲ្យ ID: `{user_id}` ជោគជ័យ!")
+        temp_reply_to(message, f"✅ បានបញ្ចូលលុយ `${amount:.2f}` ទៅឲ្យ ID: `{user_id}` ជោគជ័យ!")
     except:
-        bot.reply_to(message, "⚠️ ទម្រង់ខុស!")
+        temp_reply_to(message, "⚠️ ទម្រង់ខុស!")
 
 def process_remove_money(message, u_id, amt):
     try:
         user_id, amount = int(u_id), float(amt)
         if deduct_user_balance(user_id, amount, "ដកលុយដោយ Admin"):
-            bot.reply_to(message, f"✅ បានដកលុយ `${amount:.2f}` ពី ID: `{user_id}` ជោគជ័យ!")
+            temp_reply_to(message, f"✅ បានដកលុយ `${amount:.2f}` ពី ID: `{user_id}` ជោគជ័យ!")
         else:
-            bot.reply_to(message, "❌ ភ្ញៀវមានលុយមិនគ្រប់!")
+            temp_reply_to(message, "❌ ភ្ញៀវមានលុយមិនគ្រប់!")
     except:
-        bot.reply_to(message, "⚠️ ទម្រង់ខុស!")
+        temp_reply_to(message, "⚠️ ទម្រង់ខុស!")
 
 def process_checkuser(message, u_id):
     try:
         user_id = int(u_id)
         bal = get_user_balance(user_id)
-        bot.reply_to(message, f"👤 **ID ភ្ញៀវ:** `{user_id}`\n👛 **ទឹកប្រាក់មាន:** `${bal:.2f}`", parse_mode="Markdown")
+        temp_reply_to(message, f"👤 **ID ភ្ញៀវ:** `{user_id}`\n👛 **ទឹកប្រាក់មាន:** `${bal:.2f}`", parse_mode="Markdown")
     except:
-        bot.reply_to(message, "⚠️ លេខ ID ខុសទម្រង់!")
+        temp_reply_to(message, "⚠️ លេខ ID ខុសទម្រង់!")
         
 def process_history(message, u_id):
     try:
@@ -370,15 +392,15 @@ def process_history(message, u_id):
         conn.close()
         
         if not rows:
-            bot.reply_to(message, "❌ គ្មានប្រវត្តិប្រតិបត្តិការទេ!")
+            temp_reply_to(message, "❌ គ្មានប្រវត្តិប្រតិបត្តិការទេ!")
             return
             
         text = f"📜 **ប្រវត្តិ ១០ ដងចុងក្រោយរបស់ `{user_id}`:**\n\n"
         for r in rows:
             text += f"▪️ {r[0]} | ${r[1]:.2f} | {r[2]} | {r[3]}\n"
-        bot.reply_to(message, text, parse_mode="Markdown")
+        temp_reply_to(message, text, parse_mode="Markdown")
     except:
-        bot.reply_to(message, "⚠️ លេខ ID ខុសទម្រង់!")
+        temp_reply_to(message, "⚠️ លេខ ID ខុសទម្រង់!")
 
 # ================= Webhook & Flask =================
 @app.route('/' + TELEGRAM_BOT_TOKEN, methods=['POST'])
