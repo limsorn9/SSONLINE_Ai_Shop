@@ -322,6 +322,17 @@ def handle_admin_commands(message):
         else:
             msg = bot.reply_to(message, "📝 សូមបញ្ចូល **[IDភ្ញៀវ]** និង **[ចំនួនលុយ]** ដែលត្រូវដក៖", parse_mode="Markdown")
             bot.register_next_step_handler(msg, lambda m: process_remove_money(m, *m.text.split()[:2]) if len(m.text.split())>=2 else bot.reply_to(m,"❌ ខុសទម្រង់"))
+    elif cmd == '/checkuser':
+        if len(parts) == 2: process_checkuser(message, parts[1])
+        else:
+            msg = bot.reply_to(message, "📝 សូមបញ្ចូល **[IDភ្ញៀវ]** ដើម្បីឆែកលុយ៖", parse_mode="Markdown")
+            bot.register_next_step_handler(msg, lambda m: process_checkuser(m, m.text.strip()))
+            
+    elif cmd == '/history':
+        if len(parts) == 2: process_history(message, parts[1])
+        else:
+            msg = bot.reply_to(message, "📝 សូមបញ្ចូល **[IDភ្ញៀវ]** ដើម្បីមើលប្រវត្តិ៖", parse_mode="Markdown")
+            bot.register_next_step_handler(msg, lambda m: process_history(m, m.text.strip()))
 
 def process_add_money(message, u_id, amt):
     try:
@@ -340,6 +351,34 @@ def process_remove_money(message, u_id, amt):
             bot.reply_to(message, "❌ ភ្ញៀវមានលុយមិនគ្រប់!")
     except:
         bot.reply_to(message, "⚠️ ទម្រង់ខុស!")
+
+def process_checkuser(message, u_id):
+    try:
+        user_id = int(u_id)
+        bal = get_user_balance(user_id)
+        bot.reply_to(message, f"👤 **ID ភ្ញៀវ:** `{user_id}`\n👛 **ទឹកប្រាក់មាន:** `${bal:.2f}`", parse_mode="Markdown")
+    except:
+        bot.reply_to(message, "⚠️ លេខ ID ខុសទម្រង់!")
+        
+def process_history(message, u_id):
+    try:
+        user_id = int(u_id)
+        conn = sqlite3.connect('database.db')
+        c = conn.cursor()
+        c.execute("SELECT type, amount, description, timestamp FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 10", (user_id,))
+        rows = c.fetchall()
+        conn.close()
+        
+        if not rows:
+            bot.reply_to(message, "❌ គ្មានប្រវត្តិប្រតិបត្តិការទេ!")
+            return
+            
+        text = f"📜 **ប្រវត្តិ ១០ ដងចុងក្រោយរបស់ `{user_id}`:**\n\n"
+        for r in rows:
+            text += f"▪️ {r[0]} | ${r[1]:.2f} | {r[2]} | {r[3]}\n"
+        bot.reply_to(message, text, parse_mode="Markdown")
+    except:
+        bot.reply_to(message, "⚠️ លេខ ID ខុសទម្រង់!")
 
 # ================= Webhook & Flask =================
 @app.route('/' + TELEGRAM_BOT_TOKEN, methods=['POST'])
