@@ -129,7 +129,7 @@ def call_zoom_api(method, endpoint, json_data=None, extra_headers=None):
 def send_welcome(message):
     markup = ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(KeyboardButton("🛒 មើលទំនិញ (Shop)"), KeyboardButton("👤 គណនី (Info)"))
-    bot.send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ Zoom Store Bot!\n\n👉 សូមចុចលើប៊ូតុងខាងក្រោម ដើម្បីចាប់ផ្តើម!", reply_markup=markup, parse_mode="Markdown")
+    bot.send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ SSONLINE AI SHOP Bot!\n\n👉 សូមចុចលើប៊ូតុងខាងក្រោម ដើម្បីចាប់ផ្តើម!", reply_markup=markup, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "👤 គណនី (Info)" or m.text == "/info")
 def show_info(message):
@@ -341,7 +341,7 @@ def handle_buy_command(message):
         if user_balance < sell_price:
             temp_send_message(message.chat.id, f"❌ លុយរបស់អ្នកមិនគ្រប់គ្រាន់ទេ! (មានតែ ${user_balance:.2f})")
             return
-        if not deduct_user_balance(user_id, sell_price, f"ទិញទំនិញ Zoom: {product_id}"):
+        if not deduct_user_balance(user_id, sell_price, f"ទិញទំនិញ: {product_id}"):
             temp_send_message(message.chat.id, "❌ មានបញ្ហាក្នុងការកាត់ប្រាក់!")
             return
             
@@ -370,7 +370,7 @@ def handle_buy_command(message):
         error_code = buy_res.get('code')
         if error_code == "INSUFFICIENT_BALANCE":
             if user_id == ADMIN_ID:
-                err_msg = "❌ (Admin) លុយនៅក្នុងកុង API (Zoom Store) មិនគ្រប់គ្រាន់ទេ! សូមបញ្ចូលលុយ។"
+                err_msg = "❌ (Admin) លុយនៅក្នុងកុង API (SSONLINE AI SHOP) មិនគ្រប់គ្រាន់ទេ! សូមបញ្ចូលលុយ។"
             else:
                 err_msg = "❌ បច្ចុប្បន្នទំនិញនេះកំពុងមានបញ្ហាបច្ចេកទេស! សូមទាក់ទងទៅកាន់ Admin ផ្ទាល់។"
         elif error_code == "OUT_OF_STOCK":
@@ -467,7 +467,7 @@ def getMessage():
 
 @app.route("/")
 def webhook():
-    return "Zoom Store Bot is running!", 200
+    return "SSONLINE AI SHOP Bot is running!", 200
 
 def set_bot_commands():
     from telebot.types import BotCommand
