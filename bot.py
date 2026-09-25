@@ -298,11 +298,9 @@ def handle_category_commands(message):
         stock = p.get('stock', 0)
         
         if original_price < 1:
-            sell_price = original_price * 5.0
-        elif 1 <= original_price < 5:
             sell_price = original_price * 3.0
-        elif 5 <= original_price <= 10:
-            sell_price = original_price * 2.5
+        elif 1 <= original_price <= 10:
+            sell_price = original_price * 2.0
         elif 10 < original_price <= 50:
             sell_price = original_price * 2.0 * 0.9
         else:
@@ -349,11 +347,9 @@ def handle_buy_command(message):
         
     original_price = float(target_product.get('price', 0))
     if original_price < 1:
-        sell_price = original_price * 5.0
-    elif 1 <= original_price < 5:
         sell_price = original_price * 3.0
-    elif 5 <= original_price <= 10:
-        sell_price = original_price * 2.5
+    elif 1 <= original_price <= 10:
+        sell_price = original_price * 2.0
     elif 10 < original_price <= 50:
         sell_price = original_price * 2.0 * 0.9
     else:
