@@ -124,7 +124,7 @@ def call_zoom_api(method, endpoint, json_data=None, extra_headers=None):
 def send_welcome(message):
     markup = ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(KeyboardButton("🛒 មើលទំនិញ (Shop)"), KeyboardButton("👤 គណនី (Info)"))
-    temp_send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ Zoom Store Bot!", reply_markup=markup)
+    bot.send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ Zoom Store Bot!", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "👤 គណនី (Info)" or m.text == "/info")
 def show_info(message):
