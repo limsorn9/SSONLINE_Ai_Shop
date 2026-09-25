@@ -369,7 +369,10 @@ def handle_buy_command(message):
             
         error_code = buy_res.get('code')
         if error_code == "INSUFFICIENT_BALANCE":
-            err_msg = "❌ លុយនៅក្នុងកុង API (Zoom Store) មិនគ្រប់គ្រាន់ទេ! សូមប្រាប់ Admin ឲ្យបញ្ជូលលុយ។"
+            if user_id == ADMIN_ID:
+                err_msg = "❌ (Admin) លុយនៅក្នុងកុង API (Zoom Store) មិនគ្រប់គ្រាន់ទេ! សូមបញ្ចូលលុយ។"
+            else:
+                err_msg = "❌ បច្ចុប្បន្នទំនិញនេះកំពុងមានបញ្ហាបច្ចេកទេស! សូមទាក់ទងទៅកាន់ Admin ផ្ទាល់។"
         elif error_code == "OUT_OF_STOCK":
             err_msg = "❌ ទំនិញនេះអស់ពីស្តុកហើយ!"
         elif error_code == "PRODUCT_NOT_FOUND":
