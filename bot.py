@@ -148,8 +148,10 @@ def show_info(message):
         msg = (f"👤 **ព័ត៌មានគណនីរបស់អ្នក:**\n\n"
                f"🆔 **ID របស់អ្នក:** `{user_id}`\n"
                f"👛 **ទឹកប្រាក់មាន:** `${balance:.2f}`\n\n"
-               f"👉 (សូមទាក់ទង Admin ដើម្បីបញ្ចូលលុយ)")
-               
+               f"🏦 **របៀបបញ្ចូលលុយ (Binance Pay) ៖**\n"
+               f"1️⃣ បាញ់លុយទៅកាន់ Binance ID: `832944944`\n"
+               f"2️⃣ ថតវិក័យប័ត្រ (Screenshot) ផ្ញើមកកាន់ Admin\n"
+               f"3️⃣ ភ្ជាប់ជាមួយលេខ ID របស់អ្នក (`{user_id}`) ឲ្យ Admin ដើម្បីបញ្ចូលលុយចូលកាបូប!")
     temp_send_message(message.chat.id, msg, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "🛒 មើលទំនិញ (Shop)" or m.text == "/shop")
