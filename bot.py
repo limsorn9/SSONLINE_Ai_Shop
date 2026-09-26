@@ -150,6 +150,12 @@ def call_zoom_api(method, endpoint, json_data=None, extra_headers=None):
     except Exception as e:
         return {"success": False, "code": "NETWORK_ERROR", "message": str(e)}
 
+def safe_float(val):
+    try:
+        return float(val)
+    except:
+        return 0.0
+
 def calculate_sell_price(original_price):
     if original_price < 3.0:
         return original_price * 3.0
@@ -293,7 +299,7 @@ def handle_category_commands(message):
     
     res = call_zoom_api("GET", "/products")
     products = res.get('products', [])
-    products = [p for p in products if float(p.get('price', 0)) <= 35.0]
+    products = [p for p in products if safe_float(p.get('price', 0)) <= 35.0]
     
     if not products:
         temp_send_message(message.chat.id, "❌ មិនមានទំនិញលក់ទេនៅពេលនេះ!")
@@ -345,7 +351,7 @@ def handle_group_view(message):
     temp_send_message(message.chat.id, "កំពុងទាញយកទំនិញ... ⏳")
     res = call_zoom_api("GET", "/products")
     products = res.get('products', [])
-    products = [p for p in products if float(p.get('price', 0)) <= 35.0]
+    products = [p for p in products if safe_float(p.get('price', 0)) <= 35.0]
     
     filtered_products = []
     for p in products:
@@ -364,12 +370,12 @@ def handle_group_view(message):
     list_text = ""
     for p in filtered_products:
         p_id = p.get('id')
-        name = p.get('name')
-        original_price = float(p.get('price', 0))
+        name = p.get('name', '').replace('_', ' ').replace('*', '')
+        original_price = safe_float(p.get('price', 0))
         stock = p.get('stock', 0)
         sell_price = calculate_sell_price(original_price)
         
-        list_text += f"👉 /buy\_{p_id} : 📦 {name} | 💵 **${sell_price:.2f}** | 📦 {stock}\n"
+        list_text += f"👉 /buy_{p_id} : 📦 {name} | 💵 **${sell_price:.2f}** | 📦 {stock}\n"
         
     messages_to_send = []
     chunk = ""
@@ -402,12 +408,12 @@ def handle_buy_command(message):
     res = call_zoom_api("GET", "/products")
     products = res.get('products', [])
     
-    target_product = next((p for p in products if str(p.get('id')) == product_id and float(p.get('price', 0)) <= 35.0), None)
+    target_product = next((p for p in products if str(p.get('id')) == product_id and safe_float(p.get('price', 0)) <= 35.0), None)
     if not target_product:
         temp_send_message(message.chat.id, "❌ រកមិនឃើញទំនិញនេះទេ!")
         return
         
-    original_price = float(target_product.get('price', 0))
+    original_price = safe_float(target_product.get('price', 0))
     sell_price = calculate_sell_price(original_price)
     
     # 2. កាត់លុយ
