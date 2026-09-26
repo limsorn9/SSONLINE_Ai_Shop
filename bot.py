@@ -325,46 +325,6 @@ def handle_category_commands(message):
     if not filtered_products:
         temp_send_message(message.chat.id, "❌ មិនមានទំនិញក្នុងប្រភេទនេះទេនៅពេលនេះ។")
         return
-
-    groups = {}
-    for p in filtered_products:
-        grp = get_product_group(p.get('name', ''), selected_cat.get("keywords", []))
-        if grp not in groups:
-            groups[grp] = 0
-        groups[grp] += 1
-
-    list_text = f"📂 **{selected_cat['name']}**\nសូមជ្រើសរើសក្រុមទំនិញ៖\n\n"
-    for grp in sorted(groups.keys()):
-        count = groups[grp]
-        safe_grp = "".join([c for c in grp if c.isalnum()])
-        list_text += f"👉 /g_{safe_grp} : 📂 {grp} ({count} មុខ)\n"
-
-    temp_send_message(message.chat.id, list_text, parse_mode="Markdown")
-
-@bot.message_handler(func=lambda m: m.text and m.text.startswith('/g_'))
-def handle_group_view(message):
-    try:
-        grp_kw = message.text.split('_', 1)[1].strip().lower()
-    except:
-        return
-        
-    temp_send_message(message.chat.id, "កំពុងទាញយកទំនិញ... ⏳")
-    res = call_zoom_api("GET", "/products")
-    products = res.get('products', [])
-    products = [p for p in products if safe_float(p.get('price', 0)) <= 35.0]
-    
-    filtered_products = []
-    for p in products:
-        name_lower = p.get('name', '').lower()
-        if grp_kw in name_lower:
-            filtered_products.append(p)
-        elif name_lower.split() and "".join([c for c in name_lower.split()[0] if c.isalnum()]) == grp_kw:
-            filtered_products.append(p)
-            
-    if not filtered_products:
-        temp_send_message(message.chat.id, "❌ រកមិនឃើញទំនិញក្នុងក្រុមនេះទេ។")
-        return
-        
     filtered_products.sort(key=lambda x: x.get('name', '').lower())
     
     list_text = ""
@@ -389,6 +349,7 @@ def handle_group_view(message):
     if chunk:
         messages_to_send.append(chunk)
         
+    temp_send_message(message.chat.id, f"📂 **{selected_cat['name']} ({len(filtered_products)} មុខ):**", parse_mode="Markdown")
     for i, msg in enumerate(messages_to_send):
         if i == len(messages_to_send) - 1:
             msg += "\n📌 *ចុចលើលេខកូដបញ្ជាពណ៌ខៀវខាងលើ ដើម្បីទិញទំនិញ!*"
