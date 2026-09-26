@@ -330,12 +330,12 @@ def handle_category_commands(message):
     list_text = ""
     for p in filtered_products:
         p_id = p.get('id')
-        name = p.get('name', '').replace('_', ' ').replace('*', '')
+        name = p.get('name', '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
         original_price = safe_float(p.get('price', 0))
         stock = p.get('stock', 0)
         sell_price = calculate_sell_price(original_price)
         
-        list_text += f"👉 /buy_{p_id} : 📦 {name} | 💵 **${sell_price:.2f}** | 📦 {stock}\n"
+        list_text += f"👉 /buy_{p_id} : 📦 {name} | 💵 <b>${sell_price:.2f}</b> | 📦 {stock}\n"
         
     messages_to_send = []
     chunk = ""
@@ -349,11 +349,11 @@ def handle_category_commands(message):
     if chunk:
         messages_to_send.append(chunk)
         
-    temp_send_message(message.chat.id, f"📂 **{selected_cat['name']} ({len(filtered_products)} មុខ):**", parse_mode="Markdown")
+    temp_send_message(message.chat.id, f"📂 <b>{selected_cat['name']} ({len(filtered_products)} មុខ):</b>", parse_mode="HTML")
     for i, msg in enumerate(messages_to_send):
         if i == len(messages_to_send) - 1:
-            msg += "\n📌 *ចុចលើលេខកូដបញ្ជាពណ៌ខៀវខាងលើ ដើម្បីទិញទំនិញ!*"
-        temp_send_message(message.chat.id, msg, parse_mode="Markdown")
+            msg += "\n📌 <i>ចុចលើលេខកូដបញ្ជាពណ៌ខៀវខាងលើ ដើម្បីទិញទំនិញ!</i>"
+        temp_send_message(message.chat.id, msg, parse_mode="HTML")
 
 @bot.message_handler(func=lambda message: message.text and message.text.startswith('/buy_'))
 def handle_buy_command(message):
