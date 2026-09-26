@@ -1,3 +1,5 @@
 pyTelegramBotAPI
 requests
-flask
+Flask
+firebase-admin
+gunicorn

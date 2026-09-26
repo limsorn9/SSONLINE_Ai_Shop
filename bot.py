@@ -3,7 +3,10 @@ from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 import requests
 import os
 import time
-import sqlite3
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import db as rtdb
+import datetime
 import uuid
 from flask import Flask, request
 
@@ -40,64 +43,88 @@ def temp_reply_to(message, text, **kwargs):
         pass
     return msg
 
-# ================= ប្រព័ន្ធទិន្នន័យ (Database) =================
-def init_db():
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance REAL DEFAULT 0)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS transactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                    user_id INTEGER, 
-                    type TEXT, 
-                    amount REAL, 
-                    description TEXT, 
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS receipts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                    user_id INTEGER, 
-                    file_unique_id TEXT UNIQUE, 
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    conn.close()
+# ================= ប្រព័ន្ធទិន្នន័យ (Database - Firebase) =================
+try:
+    if not firebase_admin._apps:
+        firebase_cred_json = os.environ.get('FIREBASE_CRED_JSON')
+        if firebase_cred_json:
+            import json
+            cred_dict = json.loads(firebase_cred_json)
+            cred = credentials.Certificate(cred_dict)
+        else:
+            cred = credentials.Certificate('firebase_key.json')
+        db_url = os.environ.get('FIREBASE_DATABASE_URL')
+        if db_url:
+            firebase_admin.initialize_app(cred, {
+                'databaseURL': db_url
+            })
+        else:
+            firebase_admin.initialize_app(cred)
+except Exception as e:
+    print(f"Firebase Init Error: {e}")
 
 def log_transaction(user_id, trans_type, amount, description):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO transactions (user_id, type, amount, description) VALUES (?, ?, ?, ?)", (user_id, trans_type, amount, description))
-    conn.commit()
-    conn.close()
+    try:
+        ref = rtdb.reference('transactions')
+        ref.push({
+            'user_id': user_id,
+            'type': trans_type,
+            'amount': amount,
+            'description': description,
+            'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        })
+    except Exception as e:
+        print(e)
 
 def get_user_balance(user_id):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    result = c.fetchone()
-    conn.close()
-    return result[0] if result else 0.0
+    try:
+        ref = rtdb.reference(f'users/{user_id}')
+        user = ref.get()
+        if user and 'balance' in user:
+            return float(user['balance'])
+    except Exception as e:
+        print(e)
+    return 0.0
 
 def add_user_balance(user_id, amount):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO users (user_id, balance) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET balance = balance + ?", (user_id, amount, amount))
-    conn.commit()
-    conn.close()
-    log_transaction(user_id, "TOPUP", amount, "បញ្ជូលលុយ")
+    try:
+        ref = rtdb.reference(f'users/{user_id}')
+        user = ref.get()
+        if user:
+            current_balance = float(user.get('balance', 0.0))
+            ref.update({'balance': current_balance + amount})
+        else:
+            ref.set({'balance': amount, 'group': 'member'})
+        log_transaction(user_id, "TOPUP", amount, "បញ្ជូលលុយ")
+    except Exception as e:
+        print(e)
 
 def deduct_user_balance(user_id, amount, desc):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    result = c.fetchone()
-    if not result or result[0] < amount:
-        conn.close()
-        return False
-    c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (amount, user_id))
-    conn.commit()
-    conn.close()
-    log_transaction(user_id, "BUY", amount, desc)
-    return True
+    try:
+        ref = rtdb.reference(f'users/{user_id}')
+        user = ref.get()
+        if user:
+            current_balance = float(user.get('balance', 0.0))
+            if current_balance >= amount:
+                ref.update({'balance': current_balance - amount})
+                log_transaction(user_id, "BUY", amount, desc)
+                return True
+    except Exception as e:
+        print(e)
+    return False
 
-init_db()
+def check_and_add_receipt(user_id, file_unique_id):
+    try:
+        ref = rtdb.reference(f'receipts/{file_unique_id}')
+        if ref.get():
+            return True # Already exists
+        ref.set({
+            'user_id': user_id,
+            'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        })
+    except Exception as e:
+        print(e)
+    return False
 
 # ================= ជំនួយការ API (API Helpers) =================
 def get_zoom_headers():
@@ -122,6 +149,19 @@ def call_zoom_api(method, endpoint, json_data=None, extra_headers=None):
         return resp.json()
     except Exception as e:
         return {"success": False, "code": "NETWORK_ERROR", "message": str(e)}
+
+def calculate_sell_price(original_price):
+    if original_price < 3.0:
+        return original_price * 3.0
+    else:
+        return original_price * 2.0
+
+def get_product_group(product_name, category_keywords):
+    name_lower = product_name.lower()
+    for kw in category_keywords:
+        if kw in name_lower:
+            return kw.capitalize()
+    return product_name.split()[0].capitalize() if product_name else "Other"
 
 # ================= មុខងារ Bot (Bot Handlers) =================
 
@@ -206,17 +246,9 @@ def handle_receipt_photo(message):
     file_unique_id = message.photo[-1].file_unique_id
     file_id = message.photo[-1].file_id
     
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute("SELECT id FROM receipts WHERE file_unique_id = ?", (file_unique_id,))
-    if c.fetchone():
-        conn.close()
+    if check_and_add_receipt(user_id, file_unique_id):
         temp_reply_to(message, "❌ វិក័យបត្រនេះត្រូវបានផ្ញើរួចម្តងហើយ! សូមកុំផ្ញើដដែលៗ។")
         return
-        
-    c.execute("INSERT INTO receipts (user_id, file_unique_id) VALUES (?, ?)", (user_id, file_unique_id))
-    conn.commit()
-    conn.close()
     
     # ផ្ញើទៅ Admin
     caption = (f"📥 **មានវិក័យបត្រថ្មីពីភ្ញៀវ!**\n\n"
@@ -261,6 +293,7 @@ def handle_category_commands(message):
     
     res = call_zoom_api("GET", "/products")
     products = res.get('products', [])
+    products = [p for p in products if float(p.get('price', 0)) <= 35.0]
     
     if not products:
         temp_send_message(message.chat.id, "❌ មិនមានទំនិញលក់ទេនៅពេលនេះ!")
@@ -287,24 +320,54 @@ def handle_category_commands(message):
         temp_send_message(message.chat.id, "❌ មិនមានទំនិញក្នុងប្រភេទនេះទេនៅពេលនេះ។")
         return
 
-    # Sort products alphabetically by name
-    filtered_products.sort(key=lambda x: x.get('name', '').lower())
+    groups = {}
+    for p in filtered_products:
+        grp = get_product_group(p.get('name', ''), selected_cat.get("keywords", []))
+        if grp not in groups:
+            groups[grp] = 0
+        groups[grp] += 1
 
+    list_text = f"📂 **{selected_cat['name']}**\nសូមជ្រើសរើសក្រុមទំនិញ៖\n\n"
+    for grp in sorted(groups.keys()):
+        count = groups[grp]
+        safe_grp = "".join([c for c in grp if c.isalnum()])
+        list_text += f"👉 /g_{safe_grp} : 📂 {grp} ({count} មុខ)\n"
+
+    temp_send_message(message.chat.id, list_text, parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.startswith('/g_'))
+def handle_group_view(message):
+    try:
+        grp_kw = message.text.split('_', 1)[1].strip().lower()
+    except:
+        return
+        
+    temp_send_message(message.chat.id, "កំពុងទាញយកទំនិញ... ⏳")
+    res = call_zoom_api("GET", "/products")
+    products = res.get('products', [])
+    products = [p for p in products if float(p.get('price', 0)) <= 35.0]
+    
+    filtered_products = []
+    for p in products:
+        name_lower = p.get('name', '').lower()
+        if grp_kw in name_lower:
+            filtered_products.append(p)
+        elif name_lower.split() and "".join([c for c in name_lower.split()[0] if c.isalnum()]) == grp_kw:
+            filtered_products.append(p)
+            
+    if not filtered_products:
+        temp_send_message(message.chat.id, "❌ រកមិនឃើញទំនិញក្នុងក្រុមនេះទេ។")
+        return
+        
+    filtered_products.sort(key=lambda x: x.get('name', '').lower())
+    
     list_text = ""
     for p in filtered_products:
         p_id = p.get('id')
         name = p.get('name')
         original_price = float(p.get('price', 0))
         stock = p.get('stock', 0)
-        
-        if original_price < 1:
-            sell_price = original_price * 3.0
-        elif 1 <= original_price <= 10:
-            sell_price = original_price * 2.0
-        elif 10 < original_price <= 50:
-            sell_price = original_price * 2.0 * 0.9
-        else:
-            sell_price = original_price * 2.0 * 0.8
+        sell_price = calculate_sell_price(original_price)
         
         list_text += f"👉 /buy\_{p_id} : 📦 {name} | 💵 **${sell_price:.2f}** | 📦 {stock}\n"
         
@@ -320,7 +383,6 @@ def handle_category_commands(message):
     if chunk:
         messages_to_send.append(chunk)
         
-    temp_send_message(message.chat.id, f"📂 **{selected_cat['name']} ({len(filtered_products)} មុខ):**", parse_mode="Markdown")
     for i, msg in enumerate(messages_to_send):
         if i == len(messages_to_send) - 1:
             msg += "\n📌 *ចុចលើលេខកូដបញ្ជាពណ៌ខៀវខាងលើ ដើម្បីទិញទំនិញ!*"
@@ -340,20 +402,13 @@ def handle_buy_command(message):
     res = call_zoom_api("GET", "/products")
     products = res.get('products', [])
     
-    target_product = next((p for p in products if str(p.get('id')) == product_id), None)
+    target_product = next((p for p in products if str(p.get('id')) == product_id and float(p.get('price', 0)) <= 35.0), None)
     if not target_product:
         temp_send_message(message.chat.id, "❌ រកមិនឃើញទំនិញនេះទេ!")
         return
         
     original_price = float(target_product.get('price', 0))
-    if original_price < 1:
-        sell_price = original_price * 3.0
-    elif 1 <= original_price <= 10:
-        sell_price = original_price * 2.0
-    elif 10 < original_price <= 50:
-        sell_price = original_price * 2.0 * 0.9
-    else:
-        sell_price = original_price * 2.0 * 0.8
+    sell_price = calculate_sell_price(original_price)
     
     # 2. កាត់លុយ
     if user_id != ADMIN_ID:
@@ -474,12 +529,28 @@ def process_checkuser(message, u_id):
 def process_history(message, u_id):
     try:
         user_id = int(u_id)
-        conn = sqlite3.connect('database.db')
-        c = conn.cursor()
-        c.execute("SELECT type, amount, description, timestamp FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 10", (user_id,))
-        rows = c.fetchall()
-        conn.close()
+        ref = rtdb.reference('transactions')
+        query = ref.order_by_child('user_id').equal_to(user_id).get()
         
+        if not query:
+            temp_reply_to(message, "❌ គ្មានប្រវត្តិប្រតិបត្តិការទេ!")
+            return
+            
+        records = list(query.values())
+        records.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        records = records[:10]
+        
+        rows = []
+        for d in records:
+            ts_str = d.get('timestamp', '')
+            if ts_str:
+                try:
+                    dt = datetime.datetime.fromisoformat(ts_str)
+                    ts_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    pass
+            rows.append((d.get('type'), d.get('amount'), d.get('description'), ts_str))
+            
         if not rows:
             temp_reply_to(message, "❌ គ្មានប្រវត្តិប្រតិបត្តិការទេ!")
             return
