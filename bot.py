@@ -205,6 +205,9 @@ def clean_description(desc):
         return ""
     # Replace <<ce:...>> with neat emoji
     cleaned = re.sub(r'<<ce:\d+>>\s*', '💥 ', desc)
+    # Replace any external zoom support bot mentions with @limsorn
+    cleaned = re.sub(r'@\w*zoom\w*', '@limsorn', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'https?://t\.me/\w*zoom\w*', 'https://t.me/limsorn', cleaned, flags=re.IGNORECASE)
     # Escape raw HTML brackets to prevent broken HTML parsing
     cleaned = cleaned.replace('<', '&lt;').replace('>', '&gt;')
     return cleaned.strip()
@@ -222,7 +225,7 @@ def build_home_markup(user_id):
         InlineKeyboardButton("🦆 Profile", callback_data="cmd_info")
     )
     mk.row(
-        InlineKeyboardButton("🎧 Support ↗", url="https://t.me/ssonlinestore"),
+        InlineKeyboardButton("🎧 Support ↗", url="https://t.me/limsorn"),
         InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")
     )
     return mk
@@ -334,7 +337,7 @@ def cb_settings(call):
         "🌐 Language: English / ភាសាខ្មែរ\n"
         "💵 Currency: USDT\n"
         "🤖 Version: 2.0 (SSONLINE Store Edition)\n"
-        "📞 Support: @ssonlinestore"
+        "📞 Support: @limsorn"
     )
     mk = InlineKeyboardMarkup()
     mk.row(InlineKeyboardButton("🏠 Home", callback_data="home"))
@@ -437,7 +440,7 @@ def handle_topup(message):
         f"1️⃣ <b>Binance Pay ID:</b> <code>832944944</code>\n"
         f"2️⃣ <b>Your Account ID:</b> <code>{user_id}</code>\n"
         f"3️⃣ Screenshot receipt & send photo directly into this chat.\n\n"
-        f"<i>For ABA Bank / KHQR, please contact Admin @ssonlinestore</i>"
+        f"<i>For ABA Bank / KHQR, please contact Admin @limsorn</i>"
     )
     mk = InlineKeyboardMarkup()
     mk.row(InlineKeyboardButton("🏠 Home", callback_data="home"))
@@ -1133,7 +1136,7 @@ def cb_execute_pay(call):
             f"{codes_str}\n"
             f"========================================\n"
             f"Thank you for shopping at SSONLINE Store!\n"
-            f"Support: @ssonlinestore\n"
+            f"Support: @limsorn\n"
         )
         file_bytes = io.BytesIO(txt_content.encode('utf-8'))
         safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', product_name)[:25]
