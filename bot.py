@@ -1293,11 +1293,21 @@ def process_history(message, u_id):
 # ================= Webhook & Flask =================
 @app.route('/' + TELEGRAM_BOT_TOKEN, methods=['POST'])
 def getMessage():
-    bot.process_new_updates([telebot.types.Update.de_json(request.stream.read().decode("utf-8"))])
+    try:
+        json_data = request.get_data().decode('utf-8')
+        if json_data:
+            update = telebot.types.Update.de_json(json_data)
+            if update:
+                bot.process_new_updates([update])
+    except Exception as e:
+        print(f"Update processing error: {e}")
     return "!", 200
 
-@app.route("/")
-def webhook():
+@app.route("/", methods=['GET', 'HEAD', 'POST'])
+@app.route("/health", methods=['GET', 'HEAD'])
+@app.route("/healthz", methods=['GET', 'HEAD'])
+@app.route("/ping", methods=['GET', 'HEAD'])
+def health_check():
     return "SSONLINE AI SHOP Bot is running!", 200
 
 COMMANDS_INITIALIZED = False
@@ -1335,31 +1345,48 @@ def cmd_force_update_menu(message):
         bot.edit_message_text(f"❌ Error: {e}", message.chat.id, msg.message_id)
 
 def init_background_services():
-    # 1. Update Telegram commands
-    set_bot_commands()
-    # 2. Pre-warm products cache (ធ្វើឲ្យអ្នកប្រើដំបូងទទួលបានការឆ្លើយតបភ្លាមៗ)
+    """ដំណើរការក្នុង Background មិនឲ្យរំខាន ឬទាញឲ្យ Server ចាប់ផ្តើមយឺតឡើយ"""
+    time.sleep(2)  # រង់ចាំ 2 វិនាទីឲ្យ Flask Server ចាប់ផ្តើម listening លើ Port រួចរាល់
+    
+    # 1. កំណត់ Webhook បើមាន WEBHOOK_URL
+    if WEBHOOK_URL and TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'YOUR_TELEGRAM_TOKEN_HERE':
+        try:
+            bot.remove_webhook()
+            time.sleep(1)
+            webhook_full = WEBHOOK_URL.rstrip('/') + '/' + TELEGRAM_BOT_TOKEN
+            bot.set_webhook(url=webhook_full)
+            print(f"✅ Webhook successfully set to: {WEBHOOK_URL}")
+        except Exception as e:
+            print(f"❌ set_webhook error: {e}")
+
+    # 2. Update Telegram commands
+    try:
+        set_bot_commands()
+    except Exception as e:
+        print(f"❌ set_bot_commands error: {e}")
+
+    # 3. Pre-warm products cache
     try:
         get_filtered_products(force_refresh=True)
         print("✅ Products cache pre-warmed successfully!")
     except Exception as e:
-        print(f"Warmup error: {e}")
-    # 3. Keep-alive ping loop for Render free tier (ការពារកុំឲ្យ Render ដេកលក់ / Sleep)
+        print(f"❌ Warmup error: {e}")
+
+    # 4. Keep-alive ping loop for Render free tier (ការពារកុំឲ្យ Render ដេកលក់)
     if WEBHOOK_URL:
         ping_url = WEBHOOK_URL.rstrip('/') + '/'
         while True:
             try:
-                time.sleep(540)  # Ping រៀងរាល់ 9 នាទីម្ដង
+                time.sleep(540)  # Ping រៀងរាល់ 9 នាទីម្តង
                 requests.get(ping_url, timeout=10)
             except Exception:
                 pass
 
-# ដំណើរការសេវាកម្ម Background ភ្លាមៗ (ដំណើរការទាំងលើ Gunicorn/Render & Local)
+# ចាប់ផ្តើម Background Services ដោយមិន block Main Thread
 threading.Thread(target=init_background_services, daemon=True).start()
 
 if __name__ == '__main__':
-    bot.remove_webhook()
-    set_bot_commands()
-    if WEBHOOK_URL:
-        bot.set_webhook(url=WEBHOOK_URL + '/' + TELEGRAM_BOT_TOKEN)
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    # យក Port ពី Render (Default 10000 ឬ 5000)
+    port = int(os.environ.get('PORT', 10000))
+    # threaded=True ធានាថា Flask ឆ្លើយតប Health Check របស់ Render ភ្លាមៗ (Instant 200 OK)
+    app.run(host='0.0.0.0', port=port, threaded=True)
