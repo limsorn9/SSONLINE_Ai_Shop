@@ -222,10 +222,9 @@ def build_home_markup(user_id):
         InlineKeyboardButton("🦆 Profile", callback_data="cmd_info")
     )
     mk.row(
-        InlineKeyboardButton("⚡ API", callback_data="menu_api"),
-        InlineKeyboardButton("🎧 Support ↗", url="https://t.me/ssonlinestore")
+        InlineKeyboardButton("🎧 Support ↗", url="https://t.me/ssonlinestore"),
+        InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")
     )
-    mk.row(InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"))
     return mk
 
 def home_text(user_id, first_name, username):
@@ -234,7 +233,7 @@ def home_text(user_id, first_name, username):
     uname = f"@{username}" if username and not username.startswith("@") else (username or str(user_id))
     return (
         f"Hey <b>{first_name}</b> 🇰🇭 🐥\n"
-        f"Welcome to <b>Zoom Store</b>\n"
+        f"Welcome to <b>SSONLINE Store</b>\n"
         f"<i>Pay, and it's yours before you close the app</i>\n\n"
         f"<pre>"
         f"| {'🦆 Account':<20} | {'💰 Wallet':<12} |\n"
@@ -314,7 +313,7 @@ def cb_api(call):
     text = (
         "⚡ <b>API Integration</b>\n\n"
         "🟢 Status: Online & Operational\n"
-        "🔗 Provider: Zoom Store 255\n"
+        "🔗 Provider: SSONLINE Store\n"
         "⚡ Automated license code dispatch active."
     )
     mk = InlineKeyboardMarkup()
@@ -331,7 +330,7 @@ def cb_settings(call):
         "⚙️ <b>Settings</b>\n\n"
         "🌐 Language: English / ភាសាខ្មែរ\n"
         "💵 Currency: USDT\n"
-        "🤖 Version: 2.0 (Zoom Store Edition)\n"
+        "🤖 Version: 2.0 (SSONLINE Store Edition)\n"
         "📞 Support: @ssonlinestore"
     )
     mk = InlineKeyboardMarkup()
@@ -341,15 +340,19 @@ def cb_settings(call):
     except:
         bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=mk)
 
-@bot.callback_query_handler(func=lambda call: call.data == "my_orders")
-def cb_my_orders(call):
-    bot.answer_callback_query(call.id)
-    user_id = call.from_user.id
+@bot.message_handler(commands=['myorders', 'myhistory'])
+def cmd_myorders(message):
+    show_my_orders_msg(message.chat.id, message.from_user.id)
+
+def show_my_orders_msg(chat_id, user_id, message_id_to_edit=None):
     try:
         ref = rtdb.reference("purchases")
         query = ref.order_by_child("user_id").equal_to(user_id).get()
         if not query:
-            bot.answer_callback_query(call.id, "📭 អ្នកមិនទាន់មានប្រវត្តិទិញទំនិញទេ!", show_alert=True)
+            msg = "📭 អ្នកមិនទាន់មានប្រវត្តិទិញទំនិញទេ!"
+            mk = InlineKeyboardMarkup()
+            mk.row(InlineKeyboardButton("🛍️ Shop Now", callback_data="products_p0"), InlineKeyboardButton("🏠 Home", callback_data="home"))
+            bot.send_message(chat_id, msg, reply_markup=mk)
             return
         records = sorted(query.values(), key=lambda x: x.get("timestamp", ""), reverse=True)[:10]
         text = "<b>📋 My Orders (ប្រវត្តិទិញទំនិញ ១០ ដងចុងក្រោយ):</b>\n\n"
@@ -369,12 +372,19 @@ def cb_my_orders(call):
             )
         mk = InlineKeyboardMarkup()
         mk.row(InlineKeyboardButton("🏠 Home", callback_data="home"))
-        try:
-            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=mk)
-        except:
-            bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=mk)
+        if message_id_to_edit:
+            try:
+                bot.edit_message_text(text, chat_id, message_id_to_edit, parse_mode="HTML", reply_markup=mk)
+                return
+            except: pass
+        bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=mk)
     except Exception as e:
-        bot.answer_callback_query(call.id, f"Error: {e}", show_alert=True)
+        bot.send_message(chat_id, f"❌ Error: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "my_orders")
+def cb_my_orders(call):
+    bot.answer_callback_query(call.id)
+    show_my_orders_msg(call.message.chat.id, call.from_user.id, call.message.message_id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "cmd_info")
 def cb_info(call):
@@ -451,6 +461,202 @@ def handle_receipt_photo(message):
 
 # ================= PRODUCTS ZOOM STORE ENGINE =================
 
+# ================= CATEGORIES & MENU COMMANDS =================
+CATEGORIES = {
+    "1": {
+        "title": "🤖 AI Tools (ChatGPT, Claude...)",
+        "short_title": "AI Tools",
+        "keywords": ["chatgpt", "claude", "gemini", "grok", "gamma", "manus", "granola", "gumloop", "higgsfield", "chatprd", "quillbot", "deepseek", "copilot", "ai"]
+    },
+    "2": {
+        "title": "🌐 VPN & Network",
+        "short_title": "VPN & Network",
+        "keywords": ["vpn", "express", "nord", "surfshark", "warp", "proxy"]
+    },
+    "3": {
+        "title": "💻 Developer Tools",
+        "short_title": "Developer Tools",
+        "keywords": ["replit", "replite", "supabase", "runway", "github", "cursor", "railway", "warp build"]
+    },
+    "4": {
+        "title": "🎬 Media & Streaming (Capcut...)",
+        "short_title": "Media & Streaming",
+        "keywords": ["capcut", "youtube", "netflix", "spotify", "apple music", "prime", "amazon"]
+    },
+    "5": {
+        "title": "🎨 Design & Office (Canva, Office...)",
+        "short_title": "Design & Office",
+        "keywords": ["canva", "adobe", "figma", "microsoft", "office", "notion", "miro", "autodesk", "coursera", "duolingo", "pdf", "outlook", "linkedin"]
+    },
+    "6": {
+        "title": "📦 ផ្សេងៗ (Others)",
+        "short_title": "Others",
+        "keywords": []
+    }
+}
+
+def get_category_products(cat_id):
+    products = get_filtered_products()
+    cat_info = CATEGORIES.get(str(cat_id))
+    if not cat_info:
+        return products
+    keywords = cat_info["keywords"]
+    if str(cat_id) == "6":
+        all_other_kw = []
+        for cid in ["1", "2", "3", "4", "5"]:
+            all_other_kw.extend(CATEGORIES[cid]["keywords"])
+        return [
+            p for p in products 
+            if not any(kw in (p.get("name", "") + " " + (p.get("group") or "")).lower() for kw in all_other_kw)
+        ]
+    return [
+        p for p in products 
+        if any(kw in (p.get("name", "") + " " + (p.get("group") or "")).lower() for kw in keywords)
+    ]
+
+def show_category_view(chat_id, user_id, cat_id, page=0, message_id_to_edit=None):
+    cat_info = CATEGORIES.get(str(cat_id), {"title": "Products", "short_title": "Products"})
+    cat_products = get_category_products(cat_id)
+    if not cat_products:
+        msg_text = f"❌ បច្ចុប្បន្នមិនទាន់មានទំនិញក្នុងជំពូក <b>{cat_info['title']}</b> ក្រោម $10 ទេ!"
+        mk = InlineKeyboardMarkup()
+        mk.row(InlineKeyboardButton("🛍️ All Products", callback_data="products_p0"))
+        mk.row(InlineKeyboardButton("🏠 Home", callback_data="home"))
+        if message_id_to_edit:
+            try:
+                bot.edit_message_text(msg_text, chat_id, message_id_to_edit, parse_mode="HTML", reply_markup=mk)
+                return
+            except: pass
+        bot.send_message(chat_id, msg_text, parse_mode="HTML", reply_markup=mk)
+        return
+
+    groups = group_products(cat_products)
+    group_keys = sorted(groups.keys())
+    total_pages = max(1, (len(group_keys) + PRODUCTS_PER_PAGE - 1) // PRODUCTS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    page_keys = group_keys[page * PRODUCTS_PER_PAGE:(page + 1) * PRODUCTS_PER_PAGE]
+    total_products = sum(len(v) for v in groups.values())
+
+    bal = get_user_balance(user_id) if user_id != ADMIN_ID else None
+    balance_str = "Admin" if user_id == ADMIN_ID else f"${bal:.2f} USDT"
+
+    header = (
+        f"<blockquote>Pay, and it's yours before you close the app\n"
+        f"🏦 Welcome to SSONLINE Store 🏦\n"
+        f"💰 Your Balance: {balance_str}\n"
+        f"Category: <b>{cat_info['title']}</b> ({total_products} items)\n"
+        f"Please select a product below:</blockquote>"
+    )
+
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton(f"🛍️ {cat_info['short_title']} ({total_products})", callback_data="noop"))
+    for grp_name in page_keys:
+        items = groups[grp_name]
+        if len(items) > 1:
+            stock = sum(int(p.get("stock", 0) or 0) for p in items)
+            mk.row(InlineKeyboardButton(
+                f"🔥 {grp_name} ◇ {len(items)} plans ({stock}) »",
+                callback_data=f"cgrp_{cat_id}_{grp_name[:15]}_p{page}"
+            ))
+        else:
+            p = items[0]
+            p_id = str(p.get("id"))
+            name = p.get("name", "N/A")
+            sell = calculate_sell_price(safe_float(p.get("price", 0)))
+            stock = p.get("stock", 0)
+            mk.row(InlineKeyboardButton(
+                f"🔥 {name} | ${sell:.2f} | {stock}",
+                callback_data=f"buyp_{p_id}_c{cat_id}_p{page}"
+            ))
+
+    if total_pages > 1:
+        prev_p = (page - 1) % total_pages
+        next_p = (page + 1) % total_pages
+        mk.row(
+            InlineKeyboardButton("◀ Prev", callback_data=f"cat_{cat_id}_p{prev_p}"),
+            InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"),
+            InlineKeyboardButton("Next ▶", callback_data=f"cat_{cat_id}_p{next_p}")
+        )
+    mk.row(
+        InlineKeyboardButton("🛍️ All Products", callback_data="products_p0"),
+        InlineKeyboardButton("🛒 Cart", callback_data="menu_cart")
+    )
+    mk.row(InlineKeyboardButton("🐥 Home", callback_data="home"))
+
+    if message_id_to_edit:
+        try:
+            bot.edit_message_text(header, chat_id, message_id_to_edit, parse_mode="HTML", reply_markup=mk)
+            return
+        except: pass
+    bot.send_message(chat_id, header, parse_mode="HTML", reply_markup=mk)
+
+@bot.message_handler(commands=['1', '2', '3', '4', '5', '6'])
+def handle_cat_commands(message):
+    cat_id = message.text.replace('/', '').strip()
+    show_category_view(message.chat.id, message.from_user.id, cat_id, 0)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("cat_"))
+def cb_cat_pagination(call):
+    bot.answer_callback_query(call.id)
+    raw = call.data.replace("cat_", "")
+    parts = raw.split("_p")
+    cat_id = parts[0]
+    page = int(parts[1]) if len(parts) > 1 else 0
+    show_category_view(call.message.chat.id, call.from_user.id, cat_id, page, call.message.message_id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("cgrp_"))
+def cb_cat_group(call):
+    bot.answer_callback_query(call.id)
+    raw = call.data.replace("cgrp_", "")
+    parts = raw.split("_p")
+    page = int(parts[1]) if len(parts) > 1 else 0
+    cat_and_grp = parts[0].split("_", 1)
+    cat_id = cat_and_grp[0]
+    grp_name = cat_and_grp[1] if len(cat_and_grp) > 1 else ""
+
+    user_id = call.from_user.id
+    cat_products = get_category_products(cat_id)
+    groups = group_products(cat_products)
+
+    matching_grp = next((g for g in groups.keys() if g.startswith(grp_name) or grp_name in g), None)
+    if not matching_grp:
+        bot.answer_callback_query(call.id, "Group not found!", show_alert=True)
+        return
+
+    items = sorted(groups[matching_grp], key=lambda x: safe_float(x.get("price", 0)))
+    bal = get_user_balance(user_id) if user_id != ADMIN_ID else None
+    balance_str = "Admin" if user_id == ADMIN_ID else f"${bal:.2f} USDT"
+
+    header = (
+        f"<blockquote>Pay, and it's yours before you close the app\n"
+        f"🏦 Welcome to SSONLINE Store 🏦\n"
+        f"💰 Your Balance: {balance_str}\n"
+        f"<b>{matching_grp}</b> ({len(items)} plans)\n"
+        f"Please select a product below:</blockquote>"
+    )
+
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton(f"🛍️ {matching_grp}", callback_data="noop"))
+    for p in items:
+        p_id = str(p.get("id"))
+        name = p.get("name", "N/A")
+        sell = calculate_sell_price(safe_float(p.get("price", 0)))
+        stock = p.get("stock", 0)
+        mk.row(InlineKeyboardButton(
+            f"🔥 {name} | ${sell:.2f} | {stock}",
+            callback_data=f"buyp_{p_id}_c{cat_id}_p{page}"
+        ))
+
+    mk.row(InlineKeyboardButton("🐥 Back to Category", callback_data=f"cat_{cat_id}_p{page}"))
+    mk.row(InlineKeyboardButton("🚪 Home", callback_data="home"))
+
+    try:
+        bot.edit_message_text(header, call.message.chat.id, call.message.message_id,
+                              parse_mode="HTML", reply_markup=mk)
+    except:
+        bot.send_message(call.message.chat.id, header, parse_mode="HTML", reply_markup=mk)
+
+
 def get_filtered_products():
     """ទាញយកទំនិញតែតម្លៃដើមក្រោម១០ $ បានហើយ"""
     res = call_zoom_api("GET", "/products")
@@ -470,7 +676,7 @@ def products_header(user_id):
     balance_str = "Admin" if user_id == ADMIN_ID else f"${bal:.2f} USDT"
     return (
         f"<blockquote>Pay, and it's yours before you close the app\n"
-        f"🏦 Welcome to Zoom Store 🏦\n"
+        f"🏦 Welcome to SSONLINE Store 🏦\n"
         f"💰 Your Balance: {balance_str}\n"
         f"Available Products\n"
         f"Please select a product below:</blockquote>"
@@ -610,12 +816,16 @@ def cb_product_detail(call):
     # Preserve back button navigation
     back_to_page = 0
     back_to_grp = None
+    back_to_cat = None
     for part in parts[1:]:
         if part.startswith("p"):
             try: back_to_page = int(part[1:])
             except: pass
         elif part.startswith("g"):
             try: back_to_grp = int(part[1:])
+            except: pass
+        elif part.startswith("c"):
+            try: back_to_cat = part[1:]
             except: pass
 
     user_id = call.from_user.id
@@ -647,7 +857,12 @@ def cb_product_detail(call):
         f"<i>Delivery is automatic after payment confirmation.</i>"
     )
 
-    back_cb = f"grp_{back_to_grp}_p{back_to_page}" if back_to_grp is not None else f"products_p{back_to_page}"
+    if back_to_cat is not None:
+        back_cb = f"cat_{back_to_cat}_p{back_to_page}"
+    elif back_to_grp is not None:
+        back_cb = f"grp_{back_to_grp}_p{back_to_page}"
+    else:
+        back_cb = f"products_p{back_to_page}"
 
     mk = InlineKeyboardMarkup()
     mk.row(InlineKeyboardButton("💳 Buy Now", callback_data=f"qtyselect_{product_id}"))
@@ -902,7 +1117,7 @@ def cb_execute_pay(call):
         # 2️⃣ ផ្ញើជា file .txt (ជាអចិន្ត្រៃ ងាយស្រួលរក្សាទុក)
         txt_content = (
             f"========================================\n"
-            f"        SSONLINE AI SHOP - RECEIPT      \n"
+            f"        SSONLINE STORE - RECEIPT      \n"
             f"========================================\n"
             f"Product  : {product_name}\n"
             f"Quantity : {qty}\n"
@@ -914,7 +1129,7 @@ def cb_execute_pay(call):
             f"----------------------------------------\n"
             f"{codes_str}\n"
             f"========================================\n"
-            f"Thank you for shopping at SSONLINE AI SHOP!\n"
+            f"Thank you for shopping at SSONLINE Store!\n"
             f"Support: @ssonlinestore\n"
         )
         file_bytes = io.BytesIO(txt_content.encode('utf-8'))
@@ -1060,19 +1275,22 @@ def webhook():
 def set_bot_commands():
     from telebot.types import BotCommand
     commands = [
-        BotCommand("start", "ចាប់ផ្តើមប្រើប្រាស់ Bot ឡើងវិញ"),
-        BotCommand("shop", "មើលបញ្ជីទំនិញទាំងអស់"),
-        BotCommand("info", "មើលព័ត៌មានគណនី និងលុយ"),
-        BotCommand("topup", "របៀបបញ្ចូលទឹកប្រាក់ (Binance)"),
-        BotCommand("myhistory", "ប្រវត្តិទិញទំនិញរបស់ខ្លួន"),
+        BotCommand("start", "🏠 ផ្ទាំងដើម (Main Menu)"),
+        BotCommand("shop", "🛍️ មើលទំនិញទាំងអស់ (All Products)"),
         BotCommand("1", "🤖 AI Tools (ChatGPT, Claude...)"),
         BotCommand("2", "🌐 VPN & Network"),
         BotCommand("3", "💻 Developer Tools"),
         BotCommand("4", "🎬 Media & Streaming (Capcut...)"),
         BotCommand("5", "🎨 Design & Office (Canva, Office...)"),
-        BotCommand("6", "📦 ផ្សេងៗ (Others)")
+        BotCommand("6", "📦 ផ្សេងៗ (Others)"),
+        BotCommand("topup", "💰 បញ្ចូលទឹកប្រាក់ (Top Up)"),
+        BotCommand("myorders", "📋 ប្រវត្តិទិញទំនិញ (My Orders)"),
+        BotCommand("info", "👤 គណនី និងទឹកប្រាក់ (Profile)")
     ]
-    bot.set_my_commands(commands)
+    try:
+        bot.set_my_commands(commands)
+    except Exception as e:
+        print(f"set_bot_commands error: {e}")
 
 if __name__ == '__main__':
     bot.remove_webhook()
