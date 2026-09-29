@@ -146,6 +146,8 @@ def check_and_add_receipt(user_id, file_unique_id):
     return False
 
 # ================= ជំនួយការ API (API Helpers) =================
+api_session = requests.Session()
+
 def get_zoom_headers():
     return {
         "X-API-Key": ZOOM_API_KEY,
@@ -160,9 +162,9 @@ def call_zoom_api(method, endpoint, json_data=None, extra_headers=None):
         
     try:
         if method == "GET":
-            resp = requests.get(url, headers=headers, timeout=15)
+            resp = api_session.get(url, headers=headers, timeout=12)
         else:
-            resp = requests.post(url, headers=headers, json=json_data, timeout=30)
+            resp = api_session.post(url, headers=headers, json=json_data, timeout=25)
             
         if resp.status_code == 429: # Rate Limited
             time.sleep(2) # Simple backoff
@@ -663,11 +665,30 @@ def cb_cat_group(call):
         bot.send_message(call.message.chat.id, header, parse_mode="HTML", reply_markup=mk)
 
 
-def get_filtered_products():
-    """ទាញយកទំនិញតែតម្លៃដើមក្រោម១០ $ បានហើយ"""
+PRODUCTS_CACHE = None
+PRODUCTS_CACHE_TIME = 0
+CACHE_TTL = 90  # រក្សាទុក Cache រយៈពេល 90 វិនាទី (ធ្វើឲ្យចុចប៊ូតុងភ្លាម ចេញភ្លាម Instant)
+CACHE_LOCK = threading.Lock()
+
+def get_filtered_products(force_refresh=False):
+    """ទាញយកទំនិញតែតម្លៃដើមក្រោម១០ $ ដោយប្រើ Memory Cache ជួយឲ្យ Bot ឆ្លើយតបលឿនបំផុត (Instant)"""
+    global PRODUCTS_CACHE, PRODUCTS_CACHE_TIME
+    now = time.time()
+    
+    with CACHE_LOCK:
+        if not force_refresh and PRODUCTS_CACHE is not None and (now - PRODUCTS_CACHE_TIME) < CACHE_TTL:
+            return PRODUCTS_CACHE
+
     res = call_zoom_api("GET", "/products")
     products = res.get("products", [])
-    return [p for p in products if safe_float(p.get("price", 0)) < 10.0]
+    filtered = [p for p in products if safe_float(p.get("price", 0)) < 10.0]
+    
+    if filtered or PRODUCTS_CACHE is None:
+        with CACHE_LOCK:
+            PRODUCTS_CACHE = filtered
+            PRODUCTS_CACHE_TIME = now
+            
+    return PRODUCTS_CACHE if PRODUCTS_CACHE is not None else filtered
 
 def group_products(products):
     """Group products by their group field or first word of name"""
@@ -749,13 +770,14 @@ def show_shop(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("products_p") or call.data.startswith("refresh_p"))
 def cb_products_page(call):
     bot.answer_callback_query(call.id)
+    is_refresh = call.data.startswith("refresh_p")
     raw = call.data.replace("products_p", "").replace("refresh_p", "")
     try:
         page = int(raw)
     except:
         page = 0
     user_id = call.from_user.id
-    products = get_filtered_products()
+    products = get_filtered_products(force_refresh=is_refresh)
     if not products:
         bot.answer_callback_query(call.id, "❌ No products found!", show_alert=True)
         return
@@ -1052,8 +1074,8 @@ def cb_execute_pay(call):
 
     processing_msg = bot.send_message(call.message.chat.id, "⏳ កំពុងដំណើរការកាត់ប្រាក់ និងទាញយកទំនិញ... សូមរង់ចាំ!")
 
-    # Verify product again
-    products = get_filtered_products()
+    # Verify product again with live API data
+    products = get_filtered_products(force_refresh=True)
     target_product = next((p for p in products if str(p.get("id")) == product_id), None)
     if not target_product:
         bot.edit_message_text("❌ រកមិនឃើញទំនិញនេះទៀតទេ ឬតម្លៃលើស $10!", call.message.chat.id, processing_msg.message_id)
@@ -1312,8 +1334,27 @@ def cmd_force_update_menu(message):
     except Exception as e:
         bot.edit_message_text(f"❌ Error: {e}", message.chat.id, msg.message_id)
 
-# ដំណើរការ Update Commands ភ្លាមៗក្នុង Thread (ដំណើរការទាំងលើ Gunicorn/Render & Local)
-threading.Thread(target=set_bot_commands, daemon=True).start()
+def init_background_services():
+    # 1. Update Telegram commands
+    set_bot_commands()
+    # 2. Pre-warm products cache (ធ្វើឲ្យអ្នកប្រើដំបូងទទួលបានការឆ្លើយតបភ្លាមៗ)
+    try:
+        get_filtered_products(force_refresh=True)
+        print("✅ Products cache pre-warmed successfully!")
+    except Exception as e:
+        print(f"Warmup error: {e}")
+    # 3. Keep-alive ping loop for Render free tier (ការពារកុំឲ្យ Render ដេកលក់ / Sleep)
+    if WEBHOOK_URL:
+        ping_url = WEBHOOK_URL.rstrip('/') + '/'
+        while True:
+            try:
+                time.sleep(540)  # Ping រៀងរាល់ 9 នាទីម្ដង
+                requests.get(ping_url, timeout=10)
+            except Exception:
+                pass
+
+# ដំណើរការសេវាកម្ម Background ភ្លាមៗ (ដំណើរការទាំងលើ Gunicorn/Render & Local)
+threading.Thread(target=init_background_services, daemon=True).start()
 
 if __name__ == '__main__':
     bot.remove_webhook()
