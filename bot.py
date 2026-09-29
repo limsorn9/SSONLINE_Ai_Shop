@@ -1286,12 +1286,6 @@ def set_bot_commands():
     commands = [
         BotCommand("start", "🏠 ផ្ទាំងដើម (Main Menu)"),
         BotCommand("shop", "🛍️ មើលទំនិញទាំងអស់ (All Products)"),
-        BotCommand("1", "🤖 AI Tools (ChatGPT, Claude...)"),
-        BotCommand("2", "🌐 VPN & Network"),
-        BotCommand("3", "💻 Developer Tools"),
-        BotCommand("4", "🎬 Media & Streaming (Capcut...)"),
-        BotCommand("5", "🎨 Design & Office (Canva, Office...)"),
-        BotCommand("6", "📦 ផ្សេងៗ (Others)"),
         BotCommand("topup", "💰 បញ្ចូលទឹកប្រាក់ (Top Up)"),
         BotCommand("myorders", "📋 ប្រវត្តិទិញទំនិញ (My Orders)"),
         BotCommand("info", "👤 គណនី និងទឹកប្រាក់ (Profile)")
