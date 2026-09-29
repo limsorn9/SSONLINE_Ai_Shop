@@ -63,18 +63,37 @@ try:
 except Exception as e:
     print(f"Firebase Init Error: {e}")
 
-def log_transaction(user_id, trans_type, amount, description):
+def log_transaction(user_id, trans_type, amount, description, extra_data=None):
     try:
         ref = rtdb.reference('transactions')
-        ref.push({
+        entry = {
             'user_id': user_id,
             'type': trans_type,
             'amount': amount,
             'description': description,
             'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
-        })
+        }
+        if extra_data:
+            entry.update(extra_data)
+        ref.push(entry)
     except Exception as e:
         print(e)
+
+def log_purchase(user_id, product_id, product_name, sell_price, keys_list, quantity=1):
+    """រក្សាទុកប្រវត្តិទិញទំនិញជារៀងរហូតក្នុង Firebase (purchases/ node)"""
+    try:
+        ref = rtdb.reference('purchases')
+        ref.push({
+            'user_id': user_id,
+            'product_id': str(product_id),
+            'product_name': product_name,
+            'quantity': quantity,
+            'price_paid': sell_price,
+            'keys': keys_list,
+            'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        })
+    except Exception as e:
+        print(f"log_purchase error: {e}")
 
 def get_user_balance(user_id):
     try:
@@ -128,7 +147,10 @@ def check_and_add_receipt(user_id, file_unique_id):
 
 # ================= ជំនួយការ API (API Helpers) =================
 def get_zoom_headers():
-    return {"X-API-Key": ZOOM_API_KEY}
+    return {
+        "X-API-Key": ZOOM_API_KEY,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
 def call_zoom_api(method, endpoint, json_data=None, extra_headers=None):
     url = f"{ZOOM_BASE_URL}{endpoint}"
@@ -158,9 +180,9 @@ def safe_float(val):
 
 def calculate_sell_price(original_price):
     if original_price < 3.0:
-        return original_price * 3.0
+        return round(original_price * 3.0, 2)
     else:
-        return original_price * 2.0
+        return round(original_price * 2.0, 2)
 
 def get_product_group(product_name, category_keywords):
     name_lower = product_name.lower()
@@ -169,263 +191,759 @@ def get_product_group(product_name, category_keywords):
             return kw.capitalize()
     return product_name.split()[0].capitalize() if product_name else "Other"
 
-# ================= មុខងារ Bot (Bot Handlers) =================
+# ===================== ZOOM STORE STYLE UI & BUY FLOW =====================
+import re
+import io
+import datetime
+import uuid
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+
+PRODUCTS_PER_PAGE = 10
+
+def clean_description(desc):
+    if not desc:
+        return ""
+    # Replace <<ce:...>> with neat emoji
+    cleaned = re.sub(r'<<ce:\d+>>\s*', '💥 ', desc)
+    # Escape raw HTML brackets to prevent broken HTML parsing
+    cleaned = cleaned.replace('<', '&lt;').replace('>', '&gt;')
+    return cleaned.strip()
+
+def build_home_markup(user_id):
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton("💳 Products", callback_data="products_p0"))
+    mk.row(InlineKeyboardButton("🎉 Offers", callback_data="menu_offers"))
+    mk.row(
+        InlineKeyboardButton("🛒 Cart", callback_data="menu_cart"),
+        InlineKeyboardButton("💰 Top Up", callback_data="cmd_topup")
+    )
+    mk.row(
+        InlineKeyboardButton("📑 My Orders", callback_data="my_orders"),
+        InlineKeyboardButton("🦆 Profile", callback_data="cmd_info")
+    )
+    mk.row(
+        InlineKeyboardButton("⚡ API", callback_data="menu_api"),
+        InlineKeyboardButton("🎧 Support ↗", url="https://t.me/ssonlinestore")
+    )
+    mk.row(InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"))
+    return mk
+
+def home_text(user_id, first_name, username):
+    bal = get_user_balance(user_id) if user_id != ADMIN_ID else None
+    balance_str = "Admin" if user_id == ADMIN_ID else f"${bal:.2f}"
+    uname = f"@{username}" if username and not username.startswith("@") else (username or str(user_id))
+    return (
+        f"Hey <b>{first_name}</b> 🇰🇭 🐥\n"
+        f"Welcome to <b>Zoom Store</b>\n"
+        f"<i>Pay, and it's yours before you close the app</i>\n\n"
+        f"<pre>"
+        f"| {'🦆 Account':<20} | {'💰 Wallet':<12} |\n"
+        f"| {uname:<20} | {balance_str:<12} |\n"
+        f"| {str(user_id):<20} | {'':<12} |\n"
+        f"</pre>\n"
+        f"Channel • Chat\n"
+        f"Choose an option below 👇"
+    )
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    from telebot.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("🛒 មើលទំនិញ (Shop)", callback_data="cmd_shop"), 
-               InlineKeyboardButton("👤 គណនី (Info)", callback_data="cmd_info"))
-    markup.row(InlineKeyboardButton("🏦 បញ្ចូលប្រាក់ (Topup)", callback_data="cmd_topup"))
-    
-    # We still send ReplyKeyboardRemove just in case they had the old big keyboard stuck
-    bot.send_message(message.chat.id, "👋 សួស្តី! សូមស្វាគមន៍មកកាន់ SSONLINE AI SHOP Bot!\n\n👉 សូមចុចលើប៊ូតុងខាងក្រោម ដើម្បីចាប់ផ្តើម៖", reply_markup=markup, parse_mode="Markdown")
-    # Also send a hidden message to remove the old big keyboard if it exists
-    msg = bot.send_message(message.chat.id, "កំពុងរៀបចំប្រព័ន្ធ...", reply_markup=ReplyKeyboardRemove())
-    bot.delete_message(message.chat.id, msg.message_id)
+    user_id = message.from_user.id
+    first_name = message.from_user.first_name or "Guest"
+    username = message.from_user.username or ""
+    try:
+        cleanup = bot.send_message(message.chat.id, ".", reply_markup=ReplyKeyboardRemove())
+        bot.delete_message(message.chat.id, cleanup.message_id)
+    except:
+        pass
+    bot.send_message(message.chat.id, home_text(user_id, first_name, username),
+                     parse_mode="HTML", reply_markup=build_home_markup(user_id))
 
-@bot.callback_query_handler(func=lambda call: call.data in ["cmd_shop", "cmd_info", "cmd_topup"])
-def handle_inline_menu(call):
+@bot.callback_query_handler(func=lambda call: call.data == "home")
+def go_home(call):
     bot.answer_callback_query(call.id)
-    # Simulate a message object
-    call.message.from_user = call.from_user
-    if call.data == "cmd_shop":
-        call.message.text = "/shop"
-        show_shop(call.message)
-    elif call.data == "cmd_info":
-        show_info(call.message)
-    elif call.data == "cmd_topup":
-        handle_topup(call.message)
+    user_id = call.from_user.id
+    first_name = call.from_user.first_name or "Guest"
+    username = call.from_user.username or ""
+    text = home_text(user_id, first_name, username)
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                              parse_mode="HTML", reply_markup=build_home_markup(user_id))
+    except:
+        bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=build_home_markup(user_id))
 
-@bot.message_handler(func=lambda m: m.text == "👤 គណនី (Info)" or m.text == "/info")
+@bot.callback_query_handler(func=lambda call: call.data == "menu_offers")
+def cb_offers(call):
+    bot.answer_callback_query(call.id)
+    text = (
+        "🎉 <b>Special Offers & Promotions</b>\n\n"
+        "🔥 All prices are discounted up to 50%!\n"
+        "⚡ Instant automatic delivery 24/7.\n"
+        "🎁 Check back often for flash deals and new tools!"
+    )
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton("💳 Browse Products", callback_data="products_p0"))
+    mk.row(InlineKeyboardButton("🏠 Home", callback_data="home"))
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=mk)
+    except:
+        bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=mk)
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_cart")
+def cb_cart(call):
+    bot.answer_callback_query(call.id)
+    text = (
+        "🛒 <b>Your Cart</b>\n\n"
+        "Your shopping cart is currently empty!\n"
+        "Select products to buy directly with instant delivery."
+    )
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton("💳 Shop Now", callback_data="products_p0"))
+    mk.row(InlineKeyboardButton("🏠 Home", callback_data="home"))
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=mk)
+    except:
+        bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=mk)
+
+@bot.callback_query_handler(func=lambda call: call.data == "cart_add")
+def cb_cart_add(call):
+    bot.answer_callback_query(call.id, "💡 Please use 'Buy Now' for instant delivery!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_api")
+def cb_api(call):
+    bot.answer_callback_query(call.id)
+    text = (
+        "⚡ <b>API Integration</b>\n\n"
+        "🟢 Status: Online & Operational\n"
+        "🔗 Provider: Zoom Store 255\n"
+        "⚡ Automated license code dispatch active."
+    )
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton("🏠 Home", callback_data="home"))
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=mk)
+    except:
+        bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=mk)
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_settings")
+def cb_settings(call):
+    bot.answer_callback_query(call.id)
+    text = (
+        "⚙️ <b>Settings</b>\n\n"
+        "🌐 Language: English / ភាសាខ្មែរ\n"
+        "💵 Currency: USDT\n"
+        "🤖 Version: 2.0 (Zoom Store Edition)\n"
+        "📞 Support: @ssonlinestore"
+    )
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton("🏠 Home", callback_data="home"))
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=mk)
+    except:
+        bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=mk)
+
+@bot.callback_query_handler(func=lambda call: call.data == "my_orders")
+def cb_my_orders(call):
+    bot.answer_callback_query(call.id)
+    user_id = call.from_user.id
+    try:
+        ref = rtdb.reference("purchases")
+        query = ref.order_by_child("user_id").equal_to(user_id).get()
+        if not query:
+            bot.answer_callback_query(call.id, "📭 អ្នកមិនទាន់មានប្រវត្តិទិញទំនិញទេ!", show_alert=True)
+            return
+        records = sorted(query.values(), key=lambda x: x.get("timestamp", ""), reverse=True)[:10]
+        text = "<b>📋 My Orders (ប្រវត្តិទិញទំនិញ ១០ ដងចុងក្រោយ):</b>\n\n"
+        for i, r in enumerate(records, 1):
+            ts = r.get("timestamp", "")
+            try:
+                ts = datetime.datetime.fromisoformat(ts).strftime("%Y-%m-%d %H:%M")
+            except:
+                pass
+            qty = r.get("quantity", 1)
+            keys = r.get("keys", [])
+            keys_disp = "\n   ".join(f"<code>{k}</code>" for k in keys) if keys else "N/A"
+            text += (
+                f"{i}. 📦 <b>{r.get('product_name', 'N/A')}</b> (ចំនួន: {qty})\n"
+                f"   💵 តម្លៃ: ${float(r.get('price_paid', 0)):.2f} | 🕐 {ts}\n"
+                f"   🔑 Keys:\n   {keys_disp}\n\n"
+            )
+        mk = InlineKeyboardMarkup()
+        mk.row(InlineKeyboardButton("🏠 Home", callback_data="home"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=mk)
+        except:
+            bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=mk)
+    except Exception as e:
+        bot.answer_callback_query(call.id, f"Error: {e}", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == "cmd_info")
+def cb_info(call):
+    bot.answer_callback_query(call.id)
+    call.message.from_user = call.from_user
+    show_info(call.message)
+
+@bot.message_handler(commands=['info'])
 def show_info(message):
     user_id = message.from_user.id
-    
     if user_id == ADMIN_ID:
         api_res = call_zoom_api("GET", "/balance")
-        real_bal = api_res.get('balance', 0.0) if 'balance' in api_res else 0.0
-        currency = api_res.get('currency', 'USDT')
-        
-        msg = (f"👑 **ព័ត៌មាន Admin:**\n\n"
-               f"🆔 **Telegram ID:** `{user_id}`\n"
-               f"🏦 **លុយក្នុង Zoom API:** {real_bal:.2f} {currency}\n\n"
-               f"👉 ចុចបញ្ជាខាងក្រោមដើម្បីគ្រប់គ្រងអតិថិជន៖\n"
-               f"1. បញ្ចូលលុយ ៖ /addmoney\n"
-               f"2. ដកលុយវិញ ៖ /removemoney\n"
-               f"3. ឆែកលុយភ្ញៀវ៖ /checkuser\n"
-               f"4. ឆែកប្រវត្តិទិញ៖ /history")
+        real_bal = api_res.get("balance", 0.0) if "balance" in api_res else 0.0
+        currency = api_res.get("currency", "USDT")
+        msg = (
+            f"👑 <b>Admin Info:</b>\n\n"
+            f"🆔 <code>{user_id}</code>\n"
+            f"🏦 API Balance: <b>{real_bal:.2f} {currency}</b>\n\n"
+            f"/addmoney | /removemoney | /checkuser | /history"
+        )
     else:
         balance = get_user_balance(user_id)
-        msg = (f"👤 **ព័ត៌មានគណនីរបស់អ្នក:**\n\n"
-               f"🆔 **ID របស់អ្នក:** `{user_id}`\n"
-               f"👛 **ទឹកប្រាក់មាន:** `${balance:.2f}`\n\n"
-               f"🏦 **របៀបបញ្ចូលលុយ (Binance Pay) ៖**\n"
-               f"1️⃣ បាញ់លុយទៅកាន់ Binance ID: `832944944`\n"
-               f"2️⃣ ថតវិក័យប័ត្រ (Screenshot) ផ្ញើមកកាន់ Admin\n"
-               f"3️⃣ ភ្ជាប់ជាមួយលេខ ID របស់អ្នក (`{user_id}`) ឲ្យ Admin ដើម្បីបញ្ចូលលុយចូលកាបូប!")
-    temp_send_message(message.chat.id, msg, parse_mode="Markdown")
+        msg = (
+            f"👤 <b>Account Profile:</b>\n\n"
+            f"🆔 <code>{user_id}</code>\n"
+            f"💰 Wallet: <b>${balance:.2f} USDT</b>\n\n"
+            f"To top up your wallet: click 💰 Top Up or type /topup"
+        )
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton("💰 Top Up", callback_data="cmd_topup"), InlineKeyboardButton("🏠 Home", callback_data="home"))
+    try:
+        bot.send_message(message.chat.id, msg, parse_mode="HTML", reply_markup=mk)
+    except:
+        temp_send_message(message.chat.id, msg, parse_mode="HTML")
+
+@bot.callback_query_handler(func=lambda call: call.data == "cmd_topup")
+def cb_topup(call):
+    bot.answer_callback_query(call.id)
+    call.message.from_user = call.from_user
+    handle_topup(call.message)
 
 @bot.message_handler(commands=['topup'])
 def handle_topup(message):
     user_id = message.from_user.id
-    msg = (f"🏦 **របៀបបញ្ចូលលុយ (Binance Pay) ៖**\n\n"
-           f"បងអាចបញ្ចូលលុយបាន ២ របៀប៖\n"
-           f"1️⃣ **បាញ់តាម Binance ID:** `832944944`\n"
-           f"2️⃣ **ឬ Scan QR Code ខាងលើ**\n\n"
-           f"📸 ពេលបាញ់រួច សូមថតវិក័យប័ត្រ (Screenshot)\n"
-           f"រួចផ្ញើ (Upload) រូបនោះចូលមកក្នុង Bot នេះផ្ទាល់ នោះ Admin នឹងទទួលបាន និងបញ្ជូលលុយឲ្យបងភ្លាម!\n\n"
-           f"💡 _ចំណាំ៖ ប្រសិនបើបងចង់បញ្ចូលប្រាក់តាម **KHQR (ធនាគារខ្មែរ)** សូមធ្វើការឆាតទៅកាន់ Admin ផ្ទាល់!_")
-           
+    msg = (
+        f"🏦 <b>Top Up via Binance Pay / ABA:</b>\n\n"
+        f"1️⃣ <b>Binance Pay ID:</b> <code>832944944</code>\n"
+        f"2️⃣ <b>Your Account ID:</b> <code>{user_id}</code>\n"
+        f"3️⃣ Screenshot receipt & send photo directly into this chat.\n\n"
+        f"<i>For ABA Bank / KHQR, please contact Admin @ssonlinestore</i>"
+    )
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton("🏠 Home", callback_data="home"))
     try:
-        with open('qr_binance.png', 'rb') as photo:
-            msg_obj = bot.send_photo(message.chat.id, photo, caption=msg, parse_mode="Markdown")
-            threading.Timer(60.0, delete_msg, args=(message.chat.id, msg_obj.message_id)).start()
+        with open("qr_binance.png", "rb") as photo:
+            obj = bot.send_photo(message.chat.id, photo, caption=msg, parse_mode="HTML", reply_markup=mk)
+            threading.Timer(180.0, delete_msg, args=(message.chat.id, obj.message_id)).start()
     except:
-        temp_send_message(message.chat.id, msg, parse_mode="Markdown")
+        temp_send_message(message.chat.id, msg, parse_mode="HTML")
 
 @bot.message_handler(content_types=['photo'])
 def handle_receipt_photo(message):
     user_id = message.from_user.id
-    if user_id == ADMIN_ID: return # Admin អត់បាច់ផ្ញើវិក័យបត្រទេ
-    
+    if user_id == ADMIN_ID:
+        return
     file_unique_id = message.photo[-1].file_unique_id
     file_id = message.photo[-1].file_id
-    
     if check_and_add_receipt(user_id, file_unique_id):
-        temp_reply_to(message, "❌ វិក័យបត្រនេះត្រូវបានផ្ញើរួចម្តងហើយ! សូមកុំផ្ញើដដែលៗ។")
+        temp_reply_to(message, "❌ វិក្កយបត្រនេះធ្លាប់បានផ្ញើរួចហើយ!")
         return
-    
-    # ផ្ញើទៅ Admin
-    caption = (f"📥 **មានវិក័យបត្រថ្មីពីភ្ញៀវ!**\n\n"
-               f"👤 **ID ភ្ញៀវ:** `{user_id}`\n\n"
-               f"👉 ចុចបញ្ជាខាងក្រោមដើម្បីបញ្ចូលលុយ៖\n"
-               f"/addmoney (រួចវាយ ID ភ្ញៀវបញ្ចូលតាមក្រោយ)")
-    bot.send_photo(ADMIN_ID, file_id, caption=caption, parse_mode="Markdown")
-    
-    temp_reply_to(message, "✅ វិក័យបត្ររបស់អ្នកត្រូវបានបញ្ជូនទៅ Admin រួចរាល់។ សូមរង់ចាំបន្តិច!")
+    caption = f"📥 <b>វិក្កយបត្របញ្ចូលលុយថ្មី!</b>\n\n👤 ID: <code>{user_id}</code>\n\n👉 ប្រើ /addmoney {user_id} [ចំនួន] ដើម្បីបន្ថែមប្រាក់"
+    bot.send_photo(ADMIN_ID, file_id, caption=caption, parse_mode="HTML")
+    temp_reply_to(message, "✅ វិក្កយបត្របានផ្ញើទៅកាន់ Admin រួចរាល់! សូមរង់ចាំការត្រួតពិនិត្យបន្តិច។")
 
-@bot.message_handler(func=lambda m: m.text == "🛒 មើលទំនិញ (Shop)" or m.text == "/shop")
-def show_shop(message):
-    msg = (f"📂 **សូមជ្រើសរើសប្រភេទប្រព័ន្ធទំនិញ៖**\n\n"
-           f"👉 /1 : 🤖 AI Tools (ChatGPT, Claude, Gemini...)\n"
-           f"👉 /2 : 🌐 VPN & Network\n"
-           f"👉 /3 : 💻 Developer Tools (API, Replit, GitHub...)\n"
-           f"👉 /4 : 🎬 Media & Streaming (CapCut, YouTube, Netflix...)\n"
-           f"👉 /5 : 🎨 Design & Office (Canva, Figma, Microsoft...)\n"
-           f"👉 /6 : 📦 ផ្សេងៗ (Others)")
-    temp_send_message(message.chat.id, msg, parse_mode="Markdown")
+# ================= PRODUCTS ZOOM STORE ENGINE =================
 
-@bot.message_handler(commands=['1', '2', '3', '4', '5', '6'])
-@bot.message_handler(func=lambda message: message.text in ['1', '2', '3', '4', '5', '6'])
-def handle_category_commands(message):
-    cmd = message.text.strip()
-    if not cmd.startswith('/'):
-        cmd = '/' + cmd
-        
-    category_map = {
-        "/1": {"name": "🤖 AI Tools", "keywords": ["chatgpt", "gpt", "claude", "gemini", "grok", "ai", "perplexity", "heygen", "gamma", "bolt", "lovable"]},
-        "/2": {"name": "🌐 VPN & Network", "keywords": ["vpn", "express", "proxy", "ip"]},
-        "/3": {"name": "💻 Developer Tools", "keywords": ["api", "replit", "github", "cursor", "warp", "supabase", "posthog", "linear", "framer"]},
-        "/4": {"name": "🎬 Media & Streaming", "keywords": ["capcut", "youtube", "netflix", "spotify", "descript"]},
-        "/5": {"name": "🎨 Design & Office", "keywords": ["canva", "figma", "microsoft", "office", "autodesk", "notion"]},
-        "/6": {"name": "📦 ផ្សេងៗ (Others)", "keywords": []} # Catch-all
-    }
-    
-    selected_cat = category_map.get(cmd)
-    if not selected_cat: return
-    
-    temp_send_message(message.chat.id, f"កំពុងទាញយកទិន្នន័យទំនិញសម្រាប់ **{selected_cat['name']}**... ⏳", parse_mode="Markdown")
-    
+def get_filtered_products():
+    """ទាញយកទំនិញតែតម្លៃដើមក្រោម១០ $ បានហើយ"""
     res = call_zoom_api("GET", "/products")
-    products = res.get('products', [])
-    products = [p for p in products if safe_float(p.get('price', 0)) <= 35.0]
-    
-    if not products:
-        temp_send_message(message.chat.id, "❌ មិនមានទំនិញលក់ទេនៅពេលនេះ!")
-        return
-        
-    filtered_products = []
-    if cmd == "/6":
-        # រកទំនិញដែលមិនចូលក្នុង Category ទី 1 ដល់ 5
-        all_keywords = []
-        for k, v in category_map.items():
-            if k != "/6": all_keywords.extend(v["keywords"])
-            
-        for p in products:
-            name_lower = p.get('name', '').lower()
-            if not any(kw in name_lower for kw in all_keywords):
-                filtered_products.append(p)
-    else:
-        for p in products:
-            name_lower = p.get('name', '').lower()
-            if any(kw in name_lower for kw in selected_cat["keywords"]):
-                filtered_products.append(p)
-                
-    if not filtered_products:
-        temp_send_message(message.chat.id, "❌ មិនមានទំនិញក្នុងប្រភេទនេះទេនៅពេលនេះ។")
-        return
-    filtered_products.sort(key=lambda x: x.get('name', '').lower())
-    
-    list_text = ""
-    for p in filtered_products:
-        p_id = p.get('id')
-        name = p.get('name', '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        original_price = safe_float(p.get('price', 0))
-        stock = p.get('stock', 0)
-        sell_price = calculate_sell_price(original_price)
-        
-        list_text += f"👉 /buy_{p_id} : 📦 {name} | 💵 <b>${sell_price:.2f}</b> | 📦 {stock}\n"
-        
-    messages_to_send = []
-    chunk = ""
-    lines = list_text.strip().split('\n')
-    for line in lines:
-        if len(chunk) + len(line) + 2 > 4000:
-            messages_to_send.append(chunk)
-            chunk = line + "\n"
+    products = res.get("products", [])
+    return [p for p in products if safe_float(p.get("price", 0)) < 10.0]
+
+def group_products(products):
+    """Group products by their group field or first word of name"""
+    groups = {}
+    for p in products:
+        grp = (p.get("group") or p.get("name", "").split()[0]).strip()
+        groups.setdefault(grp, []).append(p)
+    return groups
+
+def products_header(user_id):
+    bal = get_user_balance(user_id) if user_id != ADMIN_ID else None
+    balance_str = "Admin" if user_id == ADMIN_ID else f"${bal:.2f} USDT"
+    return (
+        f"<blockquote>Pay, and it's yours before you close the app\n"
+        f"🏦 Welcome to Zoom Store 🏦\n"
+        f"💰 Your Balance: {balance_str}\n"
+        f"Available Products\n"
+        f"Please select a product below:</blockquote>"
+    )
+
+def build_products_markup(groups, page, user_id):
+    group_keys = sorted(groups.keys())
+    total_pages = max(1, (len(group_keys) + PRODUCTS_PER_PAGE - 1) // PRODUCTS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    page_keys = group_keys[page * PRODUCTS_PER_PAGE:(page + 1) * PRODUCTS_PER_PAGE]
+    total_products = sum(len(v) for v in groups.values())
+
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton(f"🛍️ Available Products ({total_products})", callback_data="noop"))
+
+    for grp_name in page_keys:
+        items = groups[grp_name]
+        grp_idx = group_keys.index(grp_name)
+        if len(items) > 1:
+            stock = sum(int(p.get("stock", 0) or 0) for p in items)
+            mk.row(InlineKeyboardButton(
+                f"🔥 {grp_name} ◇ {len(items)} plans ({stock}) »",
+                callback_data=f"grp_{grp_idx}_p{page}"
+            ))
         else:
-            chunk += line + "\n"
-    if chunk:
-        messages_to_send.append(chunk)
-        
-    temp_send_message(message.chat.id, f"📂 <b>{selected_cat['name']} ({len(filtered_products)} មុខ):</b>", parse_mode="HTML")
-    for i, msg in enumerate(messages_to_send):
-        if i == len(messages_to_send) - 1:
-            msg += "\n📌 <i>ចុចលើលេខកូដបញ្ជាពណ៌ខៀវខាងលើ ដើម្បីទិញទំនិញ!</i>"
-        temp_send_message(message.chat.id, msg, parse_mode="HTML")
+            p = items[0]
+            p_id = str(p.get("id"))
+            name = p.get("name", "N/A")
+            sell = calculate_sell_price(safe_float(p.get("price", 0)))
+            stock = p.get("stock", 0)
+            mk.row(InlineKeyboardButton(
+                f"🔥 {name} | ${sell:.2f} | {stock}",
+                callback_data=f"buyp_{p_id}_p{page}"
+            ))
 
-@bot.message_handler(func=lambda message: message.text and message.text.startswith('/buy_'))
-def handle_buy_command(message):
-    try:
-        product_id = message.text.split('_')[1].strip()
-    except:
-        return
-        
+    # Controls
+    mk.row(
+        InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_p{page}"),
+        InlineKeyboardButton("Sort: All", callback_data="noop")
+    )
+    if total_pages > 1:
+        prev_p = (page - 1) % total_pages
+        next_p = (page + 1) % total_pages
+        mk.row(
+            InlineKeyboardButton("◀ Prev", callback_data=f"products_p{prev_p}"),
+            InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"),
+            InlineKeyboardButton("Next ▶", callback_data=f"products_p{next_p}")
+        )
+    mk.row(InlineKeyboardButton("🛒 Cart", callback_data="menu_cart"))
+    mk.row(InlineKeyboardButton("🐥 Home", callback_data="home"))
+    return mk
+
+@bot.message_handler(commands=['shop'])
+def show_shop(message):
     user_id = message.from_user.id
-    temp_send_message(message.chat.id, "កំពុងដំណើរការទិញ... សូមរង់ចាំ! ⏳")
-    
-    # 1. ស្វែងរកតម្លៃដើមពី API
-    res = call_zoom_api("GET", "/products")
-    products = res.get('products', [])
-    
-    target_product = next((p for p in products if str(p.get('id')) == product_id and safe_float(p.get('price', 0)) <= 35.0), None)
-    if not target_product:
-        temp_send_message(message.chat.id, "❌ រកមិនឃើញទំនិញនេះទេ!")
+    products = get_filtered_products()
+    if not products:
+        temp_send_message(message.chat.id, "❌ បច្ចុប្បន្នមិនមានទំនិញក្រោម $10 ទេ!")
         return
-        
-    original_price = safe_float(target_product.get('price', 0))
+    groups = group_products(products)
+    mk = build_products_markup(groups, 0, user_id)
+    bot.send_message(message.chat.id, products_header(user_id), parse_mode="HTML", reply_markup=mk)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("products_p") or call.data.startswith("refresh_p"))
+def cb_products_page(call):
+    bot.answer_callback_query(call.id)
+    raw = call.data.replace("products_p", "").replace("refresh_p", "")
+    try:
+        page = int(raw)
+    except:
+        page = 0
+    user_id = call.from_user.id
+    products = get_filtered_products()
+    if not products:
+        bot.answer_callback_query(call.id, "❌ No products found!", show_alert=True)
+        return
+    groups = group_products(products)
+    mk = build_products_markup(groups, page, user_id)
+    try:
+        bot.edit_message_text(products_header(user_id), call.message.chat.id, call.message.message_id,
+                              parse_mode="HTML", reply_markup=mk)
+    except:
+        bot.send_message(call.message.chat.id, products_header(user_id), parse_mode="HTML", reply_markup=mk)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("grp_"))
+def cb_group_view(call):
+    """Inside a brand / group page"""
+    bot.answer_callback_query(call.id)
+    raw = call.data.replace("grp_", "")
+    parts = raw.split("_p")
+    grp_idx = int(parts[0])
+    page = int(parts[1]) if len(parts) > 1 else 0
+
+    user_id = call.from_user.id
+    products = get_filtered_products()
+    groups = group_products(products)
+    group_keys = sorted(groups.keys())
+
+    if grp_idx >= len(group_keys):
+        bot.answer_callback_query(call.id, "Group not found!", show_alert=True)
+        return
+
+    grp_name = group_keys[grp_idx]
+    items = sorted(groups[grp_name], key=lambda x: safe_float(x.get("price", 0)))
+
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton(f"🛍️ {grp_name}", callback_data="noop"))
+    for p in items:
+        p_id = str(p.get("id"))
+        name = p.get("name", "N/A")
+        sell = calculate_sell_price(safe_float(p.get("price", 0)))
+        stock = p.get("stock", 0)
+        mk.row(InlineKeyboardButton(
+            f"🔥 {name} | ${sell:.2f} | {stock}",
+            callback_data=f"buyp_{p_id}_g{grp_idx}_p{page}"
+        ))
+
+    mk.row(InlineKeyboardButton("🐥 Back to Store", callback_data=f"products_p{page}"))
+    mk.row(InlineKeyboardButton("🚪 Home", callback_data="home"))
+
+    try:
+        bot.edit_message_text(products_header(user_id), call.message.chat.id, call.message.message_id,
+                              parse_mode="HTML", reply_markup=mk)
+    except:
+        bot.send_message(call.message.chat.id, products_header(user_id), parse_mode="HTML", reply_markup=mk)
+
+# ================= PRODUCT DETAIL PAGE =================
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("buyp_"))
+def cb_product_detail(call):
+    """Show Zoom Store style product detail page"""
+    bot.answer_callback_query(call.id)
+    raw = call.data.replace("buyp_", "")
+    parts = raw.split("_")
+    product_id = parts[0]
+
+    # Preserve back button navigation
+    back_to_page = 0
+    back_to_grp = None
+    for part in parts[1:]:
+        if part.startswith("p"):
+            try: back_to_page = int(part[1:])
+            except: pass
+        elif part.startswith("g"):
+            try: back_to_grp = int(part[1:])
+            except: pass
+
+    user_id = call.from_user.id
+    products = get_filtered_products()
+    p = next((x for x in products if str(x.get("id")) == product_id), None)
+
+    if not p:
+        bot.answer_callback_query(call.id, "❌ Product not found or price > $10!", show_alert=True)
+        return
+
+    name = p.get("name", "N/A")
+    original_price = safe_float(p.get("price", 0))
     sell_price = calculate_sell_price(original_price)
-    
-    # 2. កាត់លុយ
+    stock = p.get("stock", 0)
+    desc = clean_description(p.get("description", ""))
+
+    detail_text = (
+        f"1 🍭 <b>{name}</b>\n\n"
+        f"🔥 Flash Sale\n"
+        f"💲 Price: <s>${original_price:.2f}</s> <b>${sell_price:.2f}</b> / code\n"
+        f"📦 Stock: <b>{stock}</b>\n\n"
+    )
+    if desc:
+        detail_text += f"{desc}\n\n"
+
+    detail_text += (
+        f"🛡️ <b>No warranty after redeem ⭐</b>\n\n"
+        f"❌ No Hold warranty and No warranty after successful activation (link is single-use).\n\n"
+        f"<i>Delivery is automatic after payment confirmation.</i>"
+    )
+
+    back_cb = f"grp_{back_to_grp}_p{back_to_page}" if back_to_grp is not None else f"products_p{back_to_page}"
+
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton("💳 Buy Now", callback_data=f"qtyselect_{product_id}"))
+    mk.row(InlineKeyboardButton("🛒 Add to Cart", callback_data="cart_add"))
+    mk.row(InlineKeyboardButton("🐥 Back to Store", callback_data=back_cb))
+
+    try:
+        bot.edit_message_text(detail_text, call.message.chat.id, call.message.message_id,
+                              parse_mode="HTML", reply_markup=mk)
+    except:
+        bot.send_message(call.message.chat.id, detail_text, parse_mode="HTML", reply_markup=mk)
+
+# ================= QUANTITY SELECTION =================
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("qtyselect_"))
+def cb_qty_select(call):
+    """Quantity selection buttons (1, 2, 3, 5, 10, 15, 20, 25, Custom Amount)"""
+    bot.answer_callback_query(call.id)
+    product_id = call.data.replace("qtyselect_", "")
+
+    products = get_filtered_products()
+    p = next((x for x in products if str(x.get("id")) == product_id), None)
+    if not p:
+        bot.answer_callback_query(call.id, "❌ Product not found!", show_alert=True)
+        return
+
+    name = p.get("name", "N/A")
+    sell_price = calculate_sell_price(safe_float(p.get("price", 0)))
+    stock = p.get("stock", 0)
+
+    text = (
+        f"📦 <b>Select Quantity</b>\n\n"
+        f"Product: <b>{name}</b>\n"
+        f"Price: <b>${sell_price:.2f}</b> / code\n"
+        f"Stock Available: <b>{stock}</b>\n\n"
+        f"Choose quantity below or enter a custom amount:"
+    )
+
+    mk = InlineKeyboardMarkup()
+    mk.row(
+        InlineKeyboardButton("📦 1", callback_data=f"cfmq_{product_id}_1"),
+        InlineKeyboardButton("📦 2", callback_data=f"cfmq_{product_id}_2"),
+        InlineKeyboardButton("📦 3", callback_data=f"cfmq_{product_id}_3"),
+        InlineKeyboardButton("📦 5", callback_data=f"cfmq_{product_id}_5")
+    )
+    mk.row(
+        InlineKeyboardButton("📦 10", callback_data=f"cfmq_{product_id}_10"),
+        InlineKeyboardButton("📦 15", callback_data=f"cfmq_{product_id}_15"),
+        InlineKeyboardButton("📦 20", callback_data=f"cfmq_{product_id}_20"),
+        InlineKeyboardButton("📦 25", callback_data=f"cfmq_{product_id}_25")
+    )
+    mk.row(InlineKeyboardButton("✏️ Custom Amount", callback_data=f"customq_{product_id}"))
+    mk.row(
+        InlineKeyboardButton("🐥 Back", callback_data=f"buyp_{product_id}"),
+        InlineKeyboardButton("🚪 Home", callback_data="home")
+    )
+
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                              parse_mode="HTML", reply_markup=mk)
+    except:
+        bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=mk)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("customq_"))
+def cb_custom_qty(call):
+    bot.answer_callback_query(call.id)
+    product_id = call.data.replace("customq_", "")
+    msg = bot.send_message(call.message.chat.id, "📝 សូមបញ្ចូលចំនួនដែលអ្នកចង់ទិញ (ឧទាហរណ៍: 1, 2, 4...) ៖")
+    bot.register_next_step_handler(msg, lambda m: step_custom_qty(m, product_id))
+
+def step_custom_qty(message, product_id):
+    try:
+        qty = int(message.text.strip())
+        if qty <= 0:
+            temp_reply_to(message, "⚠️ ចំនួនត្រូវតែធំជាង 0!")
+            return
+    except:
+        temp_reply_to(message, "⚠️ សូមបញ្ចូលជាលេខប៉ុណ្ណោះ!")
+        return
+
+    show_confirmation(message.chat.id, message.from_user.id, product_id, qty)
+
+# ================= PURCHASE CONFIRMATION SCREEN =================
+
+def show_confirmation(chat_id, user_id, product_id, qty, message_id_to_edit=None):
+    products = get_filtered_products()
+    p = next((x for x in products if str(x.get("id")) == product_id), None)
+    if not p:
+        bot.send_message(chat_id, "❌ រកមិនឃើញទំនិញនេះទៀតទេ!")
+        return
+
+    name = p.get("name", "N/A")
+    sell_price = calculate_sell_price(safe_float(p.get("price", 0)))
+    total_price = round(sell_price * qty, 2)
+    stock = int(p.get("stock", 0) or 0)
+
+    if user_id == ADMIN_ID:
+        user_balance = 999999.0
+        bal_text = "👑 Admin (Free Test)"
+        can_afford = True
+    else:
+        user_balance = get_user_balance(user_id)
+        bal_text = f"${user_balance:.2f} USDT"
+        can_afford = (user_balance >= total_price)
+
+    stock_ok = (stock >= qty)
+
+    if not stock_ok:
+        status_line = f"⚠️ <b>ស្តុកមិនគ្រប់គ្រាន់ទេ!</b> (នៅសល់តែ {stock} ប៉ុណ្ណោះ)"
+    elif can_afford:
+        status_line = f"✅ <b>ទឹកប្រាក់គ្រប់គ្រាន់</b> (នៅសល់: ${(user_balance - total_price):.2f})"
+    else:
+        status_line = f"❌ <b>ទឹកប្រាក់មិនគ្រប់គ្រាន់ទេ!</b> (ត្រូវការ ${total_price:.2f} ខ្វះ ${(total_price - user_balance):.2f})"
+
+    confirm_text = (
+        f"🛒 <b>បញ្ជាក់ការបញ្ជាទិញ (Confirm Purchase)</b>\n"
+        f"{'─'*32}\n"
+        f"📦 <b>ទំនិញ:</b> {name}\n"
+        f"🔢 <b>ចំនួនទិញ:</b> {qty} code(s)\n"
+        f"💵 <b>តម្លៃសរុប:</b> <b>${total_price:.2f}</b> (${sell_price:.2f} / code)\n"
+        f"📦 <b>ស្តុកនៅសល់:</b> {stock}\n"
+        f"{'─'*32}\n"
+        f"💰 <b>ទឹកប្រាក់របស់អ្នក:</b> {bal_text}\n"
+        f"{status_line}"
+    )
+
+    mk = InlineKeyboardMarkup()
+    if stock_ok and can_afford:
+        mk.row(InlineKeyboardButton("✅ Confirm & Pay", callback_data=f"dopay_{product_id}_{qty}"))
+        mk.row(InlineKeyboardButton("🛒 Add to Cart", callback_data="cart_add"))
+        mk.row(
+            InlineKeyboardButton("🐥 Change Qty", callback_data=f"qtyselect_{product_id}"),
+            InlineKeyboardButton("🚪 Home", callback_data="home")
+        )
+    elif not can_afford:
+        mk.row(InlineKeyboardButton("🏦 បញ្ចូលប្រាក់ (Top Up)", callback_data="cmd_topup"))
+        mk.row(
+            InlineKeyboardButton("🐥 Change Qty", callback_data=f"qtyselect_{product_id}"),
+            InlineKeyboardButton("🚪 Home", callback_data="home")
+        )
+    else:
+        mk.row(
+            InlineKeyboardButton("🐥 Change Qty", callback_data=f"qtyselect_{product_id}"),
+            InlineKeyboardButton("🚪 Home", callback_data="home")
+        )
+
+    if message_id_to_edit:
+        try:
+            bot.edit_message_text(confirm_text, chat_id, message_id_to_edit,
+                                  parse_mode="HTML", reply_markup=mk)
+            return
+        except:
+            pass
+    bot.send_message(chat_id, confirm_text, parse_mode="HTML", reply_markup=mk)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("cfmq_"))
+def cb_confirm_qty(call):
+    bot.answer_callback_query(call.id)
+    raw = call.data.replace("cfmq_", "")
+    parts = raw.split("_")
+    product_id = parts[0]
+    qty = int(parts[1]) if len(parts) > 1 else 1
+    show_confirmation(call.message.chat.id, call.from_user.id, product_id, qty, call.message.message_id)
+
+# ================= PAYMENT EXECUTION =================
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("dopay_"))
+def cb_execute_pay(call):
+    bot.answer_callback_query(call.id)
+    raw = call.data.replace("dopay_", "")
+    parts = raw.split("_")
+    product_id = parts[0]
+    qty = int(parts[1]) if len(parts) > 1 else 1
+    user_id = call.from_user.id
+
+    # Remove inline buttons immediately to prevent duplicate clicks
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=InlineKeyboardMarkup())
+    except:
+        pass
+
+    processing_msg = bot.send_message(call.message.chat.id, "⏳ កំពុងដំណើរការកាត់ប្រាក់ និងទាញយកទំនិញ... សូមរង់ចាំ!")
+
+    # Verify product again
+    products = get_filtered_products()
+    target_product = next((p for p in products if str(p.get("id")) == product_id), None)
+    if not target_product:
+        bot.edit_message_text("❌ រកមិនឃើញទំនិញនេះទៀតទេ ឬតម្លៃលើស $10!", call.message.chat.id, processing_msg.message_id)
+        return
+
+    original_price = safe_float(target_product.get("price", 0))
+    sell_price = calculate_sell_price(original_price)
+    total_price = round(sell_price * qty, 2)
+    product_name = target_product.get("name", "N/A")
+    stock = int(target_product.get("stock", 0) or 0)
+
+    if stock < qty:
+        bot.edit_message_text(f"❌ ស្តុកមិនគ្រប់គ្រាន់ទេ! (នៅសល់តែ {stock} ប៉ុណ្ណោះ)",
+                              call.message.chat.id, processing_msg.message_id)
+        return
+
+    # Deduct balance
     if user_id != ADMIN_ID:
         user_balance = get_user_balance(user_id)
-        if user_balance < sell_price:
-            temp_send_message(message.chat.id, f"❌ លុយរបស់អ្នកមិនគ្រប់គ្រាន់ទេ! (មានតែ ${user_balance:.2f})")
+        if user_balance < total_price:
+            bot.edit_message_text(
+                f"❌ ទឹកប្រាក់របស់អ្នកមិនគ្រប់គ្រាន់ទេ! (មាន: ${user_balance:.2f} ត្រូវការ: ${total_price:.2f})",
+                call.message.chat.id, processing_msg.message_id
+            )
             return
-        if not deduct_user_balance(user_id, sell_price, f"ទិញទំនិញ: {product_id}"):
-            temp_send_message(message.chat.id, "❌ មានបញ្ហាក្នុងការកាត់ប្រាក់!")
+        if not deduct_user_balance(user_id, total_price, f"ទិញ {qty}x: {product_name}"):
+            bot.edit_message_text("❌ មានបញ្ហាក្នុងការកាត់ប្រាក់!", call.message.chat.id, processing_msg.message_id)
             return
-            
-    # 3. ធ្វើការបញ្ជាទិញតាម API
+
+    # Call Zoom API Purchase
     idempotency_key = str(uuid.uuid4())
-    payload = {"product_id": product_id, "quantity": 1}
+    payload = {"product_id": product_id, "quantity": qty}
     headers = {"Idempotency-Key": idempotency_key}
-    
     buy_res = call_zoom_api("POST", "/purchase", json_data=payload, extra_headers=headers)
-    
-    if buy_res.get('success'):
-        codes = buy_res.get('codes', [])
-        codes_str = "\n".join([f"`{c}`" for c in codes])
-        
-        msg = (f"✅ **ការបញ្ជាទិញជោគជ័យ!**\n\n"
-               f"📦 ទំនិញ: {target_product.get('name')}\n"
-               f"🔑 **ទិន្នន័យរបស់អ្នក:**\n{codes_str}\n\n")
-        if user_id != ADMIN_ID:
-            msg += f"💰 លុយនៅសល់: `${get_user_balance(user_id):.2f}`"
-        temp_send_message(message.chat.id, msg, parse_mode="Markdown")
+
+    try:
+        bot.delete_message(call.message.chat.id, processing_msg.message_id)
+    except:
+        pass
+
+    if buy_res.get("success"):
+        codes = buy_res.get("codes", [])
+        keys_list = list(codes)
+        codes_str = "\n".join(keys_list)
+        ts_now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        remaining_balance = get_user_balance(user_id) if user_id != ADMIN_ID else None
+
+        # 1️⃣ សារជោគជ័យ (ជាអចិន្ត្រៃ មិនលុបចេញជាដាច់ខាត)
+        success_msg = (
+            f"✅ **ការបញ្ជាទិញជោគជ័យ! (Purchase Successful)**\n"
+            f"{'═'*32}\n"
+            f"📦 **ទំនិញ:** {product_name}\n"
+            f"🔢 **ចំនួន:** {qty} code(s)\n"
+            f"💵 **តម្លៃបានបង់:** `${total_price:.2f}`\n"
+            f"🕐 **កាលបរិច្ឆេទ:** `{ts_now}`\n"
+            f"{'─'*32}\n"
+            f"🔑 **Key / Code របស់អ្នក:**\n"
+            f"```\n{codes_str}\n```\n"
+            f"{'─'*32}\n"
+        )
+        if remaining_balance is not None:
+            success_msg += f"💰 **ទឹកប្រាក់នៅសល់:** `${remaining_balance:.2f}`\n"
+        success_msg += "\n📎 *ខ្ញុំបានផ្ញើ File .txt ជូនអ្នកផងដែរ ដើម្បីងាយរក្សាទុក!*"
+
+        bot.send_message(call.message.chat.id, success_msg, parse_mode="Markdown")
+
+        # 2️⃣ ផ្ញើជា file .txt (ជាអចិន្ត្រៃ ងាយស្រួលរក្សាទុក)
+        txt_content = (
+            f"========================================\n"
+            f"        SSONLINE AI SHOP - RECEIPT      \n"
+            f"========================================\n"
+            f"Product  : {product_name}\n"
+            f"Quantity : {qty}\n"
+            f"Price    : ${total_price:.2f} (${sell_price:.2f}/code)\n"
+            f"Date/Time: {ts_now}\n"
+            f"User ID  : {user_id}\n"
+            f"========================================\n"
+            f"YOUR KEY(S) / CODE(S):\n"
+            f"----------------------------------------\n"
+            f"{codes_str}\n"
+            f"========================================\n"
+            f"Thank you for shopping at SSONLINE AI SHOP!\n"
+            f"Support: @ssonlinestore\n"
+        )
+        file_bytes = io.BytesIO(txt_content.encode('utf-8'))
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', product_name)[:25]
+        file_bytes.name = f"SSONLINE_{safe_name}_{user_id}.txt"
+        bot.send_document(call.message.chat.id, file_bytes, caption=f"📄 Receipt: {product_name} (Qty: {qty})")
+
+        # 3️⃣ កត់ត្រាទុកក្នុង Firebase RTDB ជារៀងរហូត
+        log_purchase(user_id, product_id, product_name, total_price, keys_list, quantity=qty)
+        log_transaction(user_id, "BUY", total_price, f"ទិញ {qty}x: {product_name}")
+
     else:
-        # បង្វិលលុយវិញ
+        # Refund if failed
         if user_id != ADMIN_ID:
-            add_user_balance(user_id, sell_price)
-            
-        error_code = buy_res.get('code')
+            add_user_balance(user_id, total_price)
+
+        error_code = buy_res.get("code", "")
         if error_code == "INSUFFICIENT_BALANCE":
-            if user_id == ADMIN_ID:
-                err_msg = "❌ (Admin) លុយនៅក្នុងកុង API (SSONLINE AI SHOP) មិនគ្រប់គ្រាន់ទេ! សូមបញ្ចូលលុយ។"
-            else:
-                err_msg = "❌ បច្ចុប្បន្នទំនិញនេះកំពុងមានបញ្ហាបច្ចេកទេស! សូមទាក់ទងទៅកាន់ Admin ផ្ទាល់។"
+            err_msg = "❌ លុយក្នុង API មិនគ្រប់! សូមទាក់ទង Admin។ (លុយបានបង្វិលចូលកាបូបវិញ)"
         elif error_code == "OUT_OF_STOCK":
-            err_msg = "❌ ទំនិញនេះអស់ពីស្តុកហើយ!"
+            err_msg = "❌ ទំនិញនេះទើបតែអស់ស្តុក! (លុយបានបង្វិលចូលកាបូបវិញ)"
         elif error_code == "PRODUCT_NOT_FOUND":
-            err_msg = "❌ រកមិនឃើញទំនិញនេះក្នុងប្រព័ន្ធទេ។"
+            err_msg = "❌ រកមិនឃើញទំនិញនេះ! (លុយបានបង្វិលចូលកាបូបវិញ)"
         else:
-            err_msg = f"❌ បរាជ័យក្នុងការទិញ! (Code: {error_code})"
-            
-        temp_send_message(message.chat.id, err_msg)
+            err_msg = f"❌ ការទិញបរាជ័យ (Code: {error_code})! លុយបានបង្វិលចូលកាបូបរបស់អ្នកវិញរួចរាល់។"
+        bot.send_message(call.message.chat.id, err_msg)
+
 
 # ================= Admin Commands =================
-# (អក្សរកាត់សម្រាប់ Admin Command ដែលឲ្យចុចវាយបញ្ចូល)
 @bot.message_handler(commands=['addmoney', 'removemoney', 'checkuser', 'history'])
 def handle_admin_commands(message):
     if message.from_user.id != ADMIN_ID: return
@@ -546,6 +1064,7 @@ def set_bot_commands():
         BotCommand("shop", "មើលបញ្ជីទំនិញទាំងអស់"),
         BotCommand("info", "មើលព័ត៌មានគណនី និងលុយ"),
         BotCommand("topup", "របៀបបញ្ចូលទឹកប្រាក់ (Binance)"),
+        BotCommand("myhistory", "ប្រវត្តិទិញទំនិញរបស់ខ្លួន"),
         BotCommand("1", "🤖 AI Tools (ChatGPT, Claude...)"),
         BotCommand("2", "🌐 VPN & Network"),
         BotCommand("3", "💻 Developer Tools"),
