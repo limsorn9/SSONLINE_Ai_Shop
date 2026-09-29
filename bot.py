@@ -246,6 +246,9 @@ def home_text(user_id, first_name, username):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
+    global COMMANDS_INITIALIZED
+    if not COMMANDS_INITIALIZED:
+        threading.Thread(target=set_bot_commands, daemon=True).start()
     user_id = message.from_user.id
     first_name = message.from_user.first_name or "Guest"
     username = message.from_user.username or ""
@@ -1272,7 +1275,10 @@ def getMessage():
 def webhook():
     return "SSONLINE AI SHOP Bot is running!", 200
 
+COMMANDS_INITIALIZED = False
+
 def set_bot_commands():
+    global COMMANDS_INITIALIZED
     from telebot.types import BotCommand
     commands = [
         BotCommand("start", "🏠 ផ្ទាំងដើម (Main Menu)"),
@@ -1288,9 +1294,29 @@ def set_bot_commands():
         BotCommand("info", "👤 គណនី និងទឹកប្រាក់ (Profile)")
     ]
     try:
+        try:
+            bot.delete_my_commands()
+        except Exception as e_del:
+            print(f"delete_my_commands note: {e_del}")
         bot.set_my_commands(commands)
+        COMMANDS_INITIALIZED = True
+        print("✅ Telegram bot menu commands successfully updated!")
     except Exception as e:
-        print(f"set_bot_commands error: {e}")
+        print(f"❌ set_bot_commands error: {e}")
+
+@bot.message_handler(commands=['setmenu', 'updatemenu'])
+def cmd_force_update_menu(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    msg = bot.reply_to(message, "⏳ កំពុង Reset និង Update Telegram Menu Commands...")
+    try:
+        set_bot_commands()
+        bot.edit_message_text("✅ បាន Update Menu Commands នៅខាងឆ្វេងជោគជ័យ ១០០%!", message.chat.id, msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"❌ Error: {e}", message.chat.id, msg.message_id)
+
+# ដំណើរការ Update Commands ភ្លាមៗក្នុង Thread (ដំណើរការទាំងលើ Gunicorn/Render & Local)
+threading.Thread(target=set_bot_commands, daemon=True).start()
 
 if __name__ == '__main__':
     bot.remove_webhook()
