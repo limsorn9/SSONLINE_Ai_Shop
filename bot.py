@@ -92,6 +92,8 @@ def log_purchase(user_id, product_id, product_name, sell_price, keys_list, quant
             'keys': keys_list,
             'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
         })
+        # Track product popularity stats
+        increment_product_stat(product_id, quantity)
     except Exception as e:
         print(f"log_purchase error: {e}")
 
@@ -181,17 +183,134 @@ def safe_float(val):
         return 0.0
 
 def calculate_sell_price(original_price):
-    if original_price < 3.0:
+    """Calculate our sell price based on pricing tiers (API price is NEVER shown to user)"""
+    if original_price < 0.5:
+        return round(original_price * 6.0, 2)
+    elif original_price < 1.0:
+        return round(original_price * 3.5, 2)
+    elif original_price < 2.0:
         return round(original_price * 3.0, 2)
+    elif original_price < 5.0:
+        return round(original_price * 2.5, 2)
     else:
         return round(original_price * 2.0, 2)
 
-def get_product_group(product_name, category_keywords):
-    name_lower = product_name.lower()
-    for kw in category_keywords:
-        if kw in name_lower:
-            return kw.capitalize()
-    return product_name.split()[0].capitalize() if product_name else "Other"
+def calculate_display_price(sell_price):
+    """Generate a fake 'original' crossed-out price that is always >= 60% above sell price.
+    This is shown as the 'before discount' price. API cost is NEVER revealed."""
+    # Apply at least 60% markup (so discount appears as 37.5%+)
+    # Use clean numbers to look realistic (e.g. $4.99, $9.99, $12.00)
+    multiplier = 1.65  # 65% above sell = user sees ~40% discount
+    display = sell_price * multiplier
+    # Round to .99 or .00 for a retail-style price
+    base = int(display)
+    if display - base >= 0.5:
+        display = base + 0.99
+    else:
+        display = base - 0.01 if base > 0 else 0.99
+    # Safety: ensure at least 60% above sell
+    if display < sell_price * 1.60:
+        display = round(sell_price * 1.65, 2)
+    return round(display, 2)
+
+def get_product_logo(name):
+    """Return a matching emoji logo for well-known brands/tools"""
+    n = name.lower()
+    # AI Tools
+    if "chatgpt" in n or "openai" in n:    return "🧠"
+    if "claude" in n:                       return "🟣"
+    if "gemini" in n:                       return "✨"
+    if "grok" in n:                         return "🤖"
+    if "copilot" in n or "github" in n:    return "🐙"
+    if "deepseek" in n:                     return "🔍"
+    if "manus" in n:                        return "🧠"
+    if "gamma" in n:                        return "🎨"
+    if "perplexity" in n:                   return "🔮"
+    if "quillbot" in n:                     return "✍️"
+    if "midjourney" in n:                   return "🌄"
+    if "runway" in n:                       return "🎥"
+    if "heygen" in n:                       return "🎤"
+    if "elevenlabs" in n:                   return "🔊"
+    if "notion" in n:                       return "📝"
+    if "grammarly" in n:                    return "📖"
+    # Design & Office
+    if "canva" in n:                        return "🎨"
+    if "adobe" in n:                        return "🅰️"
+    if "figma" in n:                        return "🕎"
+    if "microsoft" in n or "office" in n or "m365" in n or "365" in n: return "📊"
+    if "outlook" in n:                      return "📧"
+    if "linkedin" in n:                     return "💼"
+    if "autodesk" in n:                     return "🏗️"
+    if "miro" in n:                         return "📌"
+    # Media & Streaming
+    if "netflix" in n:                      return "🎬"
+    if "spotify" in n:                      return "🎵"
+    if "youtube" in n:                      return "▶️"
+    if "capcut" in n:                       return "✂️"
+    if "apple" in n:                        return "🍎"
+    if "amazon" in n or "prime" in n:      return "📦"
+    if "disney" in n:                       return "⭐"
+    if "hbo" in n or "max" in n:           return "🎦"
+    if "tidal" in n:                        return "🎶"
+    if "deezer" in n:                       return "🎧"
+    # VPN & Network
+    if "vpn" in n or "expressvpn" in n or "express" in n: return "🔒"
+    if "nordvpn" in n or "nord" in n:      return "🛡️"
+    if "surfshark" in n:                    return "🦈"
+    if "warp" in n or "cloudflare" in n:   return "⚡"
+    # Developer Tools
+    if "replit" in n:                       return "💻"
+    if "supabase" in n:                     return "🔩"
+    if "railway" in n:                      return "🚂"
+    if "cursor" in n:                       return "📦"
+    if "duolingo" in n:                     return "🦉"
+    if "coursera" in n:                     return "🎓"
+    if "pdf" in n:                          return "📄"
+    # Fallback
+    return "🔥"
+
+# ===== POPULARITY TRACKING =====
+_POPULARITY_CACHE = {}
+_POPULARITY_CACHE_TIME = 0
+_POPULARITY_CACHE_TTL = 300  # 5 minutes
+
+def get_product_popularity():
+    """Fetch product purchase counts from Firebase product_stats node.
+    Returns dict: {product_id_str: total_sold_count}"""
+    global _POPULARITY_CACHE, _POPULARITY_CACHE_TIME
+    now = time.time()
+    if now - _POPULARITY_CACHE_TIME < _POPULARITY_CACHE_TTL and _POPULARITY_CACHE:
+        return _POPULARITY_CACHE
+    try:
+        ref = rtdb.reference('product_stats')
+        data = ref.get() or {}
+        result = {pid: int(info.get('sold', 0)) for pid, info in data.items()}
+        _POPULARITY_CACHE = result
+        _POPULARITY_CACHE_TIME = now
+        return result
+    except Exception as e:
+        print(f"get_product_popularity error: {e}")
+        return _POPULARITY_CACHE or {}
+
+def increment_product_stat(product_id, quantity=1):
+    """Increment sold count for a product in Firebase product_stats"""
+    try:
+        ref = rtdb.reference(f'product_stats/{product_id}')
+        current = ref.get() or {}
+        ref.update({'sold': int(current.get('sold', 0)) + quantity})
+        # Invalidate cache
+        global _POPULARITY_CACHE_TIME
+        _POPULARITY_CACHE_TIME = 0
+    except Exception as e:
+        print(f"increment_product_stat error: {e}")
+
+def get_product_badge(product_id, popularity):
+    """Return a badge based on sales count: 🔥HOT, ⭐NEW, or empty"""
+    sold = popularity.get(str(product_id), 0)
+    if sold >= 50: return "🔥"
+    if sold >= 20: return "⭐"
+    if sold >= 5:  return "✨"
+    return ""
 
 # ===================== ZOOM STORE STYLE UI & BUY FLOW =====================
 import re
@@ -227,9 +346,10 @@ def build_home_markup(user_id):
         InlineKeyboardButton("🦆 Profile", callback_data="cmd_info")
     )
     mk.row(
-        InlineKeyboardButton("🎧 Support ↗", url="https://t.me/limsorn"),
-        InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")
+        InlineKeyboardButton("📢 Channel ↗", url="https://t.me/ssonlinechanel"),
+        InlineKeyboardButton("🎧 Admin Support ↗", url="https://t.me/limsorn")
     )
+    mk.row(InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"))
     return mk
 
 def home_text(user_id, first_name, username):
@@ -245,7 +365,8 @@ def home_text(user_id, first_name, username):
         f"| {uname:<20} | {balance_str:<12} |\n"
         f"| {str(user_id):<20} | {'':<12} |\n"
         f"</pre>\n"
-        f"Channel • Chat\n"
+        f"📢 ក្រុម: <a href='https://t.me/ssonlinechanel'>@ssonlinechanel</a>\n"
+        f"🎧 Admin: <a href='https://t.me/limsorn'>@limsorn</a>\n"
         f"Choose an option below 👇"
     )
 
@@ -682,12 +803,12 @@ def get_filtered_products(force_refresh=False):
     res = call_zoom_api("GET", "/products")
     products = res.get("products", [])
     filtered = [p for p in products if safe_float(p.get("price", 0)) < 10.0]
-    
+
     if filtered or PRODUCTS_CACHE is None:
         with CACHE_LOCK:
             PRODUCTS_CACHE = filtered
             PRODUCTS_CACHE_TIME = now
-            
+
     return PRODUCTS_CACHE if PRODUCTS_CACHE is not None else filtered
 
 def group_products(products):
@@ -698,6 +819,13 @@ def group_products(products):
         groups.setdefault(grp, []).append(p)
     return groups
 
+def get_sorted_group_keys(groups, popularity):
+    """Sort group keys by total sold count descending (popular first)"""
+    def grp_sold(grp_name):
+        items = groups[grp_name]
+        return sum(popularity.get(str(p.get("id", "")), 0) for p in items)
+    return sorted(groups.keys(), key=grp_sold, reverse=True)
+
 def products_header(user_id):
     bal = get_user_balance(user_id) if user_id != ADMIN_ID else None
     balance_str = "Admin" if user_id == ADMIN_ID else f"${bal:.2f} USDT"
@@ -705,27 +833,31 @@ def products_header(user_id):
         f"<blockquote>Pay, and it's yours before you close the app\n"
         f"🏦 Welcome to SSONLINE Store 🏦\n"
         f"💰 Your Balance: {balance_str}\n"
-        f"Available Products\n"
+        f"🔥 Popular Products — Updated Live\n"
         f"Please select a product below:</blockquote>"
     )
 
 def build_products_markup(groups, page, user_id):
-    group_keys = sorted(groups.keys())
+    popularity = get_product_popularity()
+    group_keys = get_sorted_group_keys(groups, popularity)  # popular first
     total_pages = max(1, (len(group_keys) + PRODUCTS_PER_PAGE - 1) // PRODUCTS_PER_PAGE)
     page = max(0, min(page, total_pages - 1))
     page_keys = group_keys[page * PRODUCTS_PER_PAGE:(page + 1) * PRODUCTS_PER_PAGE]
     total_products = sum(len(v) for v in groups.values())
 
     mk = InlineKeyboardMarkup()
-    mk.row(InlineKeyboardButton(f"🛍️ Available Products ({total_products})", callback_data="noop"))
+    mk.row(InlineKeyboardButton(f"🔥 Hot Products ({total_products})", callback_data="noop"))
 
     for grp_name in page_keys:
         items = groups[grp_name]
         grp_idx = group_keys.index(grp_name)
+        logo = get_product_logo(grp_name)
+        sold_total = sum(popularity.get(str(p.get("id", "")), 0) for p in items)
+        badge = "🔥 " if sold_total >= 50 else "⭐ " if sold_total >= 10 else ""
         if len(items) > 1:
             stock = sum(int(p.get("stock", 0) or 0) for p in items)
             mk.row(InlineKeyboardButton(
-                f"🔥 {grp_name} ◇ {len(items)} plans ({stock}) »",
+                f"{badge}{logo} {grp_name} ◇ {len(items)} plans ({stock}) »",
                 callback_data=f"grp_{grp_idx}_p{page}"
             ))
         else:
@@ -735,14 +867,14 @@ def build_products_markup(groups, page, user_id):
             sell = calculate_sell_price(safe_float(p.get("price", 0)))
             stock = p.get("stock", 0)
             mk.row(InlineKeyboardButton(
-                f"🔥 {name} | ${sell:.2f} | {stock}",
+                f"{badge}{logo} {name} | ${sell:.2f} | {stock}",
                 callback_data=f"buyp_{p_id}_p{page}"
             ))
 
     # Controls
     mk.row(
         InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_p{page}"),
-        InlineKeyboardButton("Sort: All", callback_data="noop")
+        InlineKeyboardButton("🔥 Popular First", callback_data="noop")
     )
     if total_pages > 1:
         prev_p = (page - 1) % total_pages
@@ -865,15 +997,16 @@ def cb_product_detail(call):
         return
 
     name = p.get("name", "N/A")
-    original_price = safe_float(p.get("price", 0))
+    original_price = safe_float(p.get("price", 0))  # API cost — NEVER shown
     sell_price = calculate_sell_price(original_price)
+    display_price = calculate_display_price(sell_price)  # Fake crossed-out price
     stock = p.get("stock", 0)
     desc = clean_description(p.get("description", ""))
 
     detail_text = (
         f"1 🍭 <b>{name}</b>\n\n"
-        f"🔥 Flash Sale\n"
-        f"💲 Price: <s>${original_price:.2f}</s> <b>${sell_price:.2f}</b> / code\n"
+        f"🔥 Flash Sale — Up to 40% OFF!\n"
+        f"💲 Price: <s>${display_price:.2f}</s> → <b>${sell_price:.2f}</b> / code\n"
         f"📦 Stock: <b>{stock}</b>\n\n"
     )
     if desc:
