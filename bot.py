@@ -1,5 +1,5 @@
 import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 import requests
 import os
 import time
@@ -17,6 +17,7 @@ WEBHOOK_URL = os.environ.get('WEBHOOK_URL', '')
 
 ZOOM_BASE_URL = "https://api.zoomstore255.com/api/v1"
 ADMIN_ID = 240224709 # Default admin ID
+REQUIRED_GROUP = os.environ.get('REQUIRED_GROUP', '@SSONLINE_Ai_Bot').strip()
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 app = Flask(__name__)
@@ -42,6 +43,100 @@ def temp_reply_to(message, text, **kwargs):
     except:
         pass
     return msg
+
+# ================= ការត្រួតពិនិត្យសមាជិកភាពក្រុម (Group Membership Verification) =================
+_MEMBERSHIP_CACHE = {}  # {user_id: timestamp}
+_MEMBERSHIP_CACHE_TTL = 300  # Cache 5 នាទីដើម្បីកុំឲ្យ spam Telegram API
+
+def get_required_chat_id():
+    grp = REQUIRED_GROUP
+    if grp.startswith('https://t.me/'):
+        return '@' + grp.split('https://t.me/')[-1].strip('/')
+    if not grp.startswith('@') and not grp.startswith('-'):
+        return '@' + grp
+    return grp
+
+def get_join_group_url():
+    clean = REQUIRED_GROUP.lstrip('@')
+    if REQUIRED_GROUP.startswith('http'):
+        return REQUIRED_GROUP
+    return f"https://t.me/{clean}"
+
+def check_membership_status(user_id):
+    """
+    ពិនិត្យមើលថាតើសមាជិកបានចូលរួមក្នុងក្រុម REQUIRED_GROUP ឬនៅ
+    Returns: (is_member: bool, reason: str or None)
+    """
+    if user_id == ADMIN_ID:
+        return True, None
+    now = time.time()
+    if user_id in _MEMBERSHIP_CACHE:
+        if now - _MEMBERSHIP_CACHE[user_id] < _MEMBERSHIP_CACHE_TTL:
+            return True, None
+    try:
+        target_chat = get_required_chat_id()
+        chat_member = bot.get_chat_member(target_chat, user_id)
+        if chat_member.status in ['creator', 'administrator', 'member', 'restricted']:
+            _MEMBERSHIP_CACHE[user_id] = now
+            return True, None
+        return False, "not_joined"
+    except telebot.apihelper.ApiTelegramException as e:
+        err_msg = str(e).lower()
+        if "user not found" in err_msg or "participant_id_invalid" in err_msg:
+            return False, "not_joined"
+        if "chat not found" in err_msg or "bot is not a member" in err_msg or "chat_admin_required" in err_msg:
+            print(f"⚠️ Bot permission issue in {REQUIRED_GROUP}: {e}")
+            return False, "bot_not_in_group"
+        print(f"⚠️ get_chat_member error: {e}")
+        return False, "unknown_error"
+    except Exception as e:
+        print(f"⚠️ check_membership_status error: {e}")
+        return False, "unknown_error"
+
+def is_user_member(user_id):
+    is_mem, _ = check_membership_status(user_id)
+    return is_mem
+
+def send_join_required_message(chat_id, user_id, message_id_to_edit=None):
+    group_url = get_join_group_url()
+    text = (
+        f"👋 <b>សូមស្វាគមន៍មកកាន់ SSONLINE Store!</b> 🐥\n\n"
+        f"⚠️ <b>លក្ខខណ្ឌប្រើប្រាស់ Bot៖</b>\n"
+        f"ដើម្បីអាចប្រើប្រាស់ Bot និងបញ្ជាទិញទំនិញបាន អ្នកត្រូវតែចូលរួមក្នុងក្រុមផ្លូវការរបស់យើងជាមុនសិន។\n\n"
+        f"👉 <b>ក្រុម៖</b> <a href=\"{group_url}\">{REQUIRED_GROUP}</a>\n\n"
+        f"<i>សូមចុចប៊ូតុង <b>«📢 ចូលក្រុម»</b> ខាងក្រោម រួចចុច <b>«✅ ខ្ញុំបានចូលរួចហើយ»</b> ដើម្បីចាប់ផ្តើមប្រើប្រាស់។</i>"
+    )
+    mk = InlineKeyboardMarkup()
+    mk.row(InlineKeyboardButton(f"📢 ចូលក្រុម {REQUIRED_GROUP} ↗", url=group_url))
+    mk.row(InlineKeyboardButton("✅ ខ្ញុំបានចូលរួចហើយ (Verify)", callback_data="verify_joined"))
+
+    if message_id_to_edit:
+        try:
+            bot.edit_message_text(text, chat_id, message_id_to_edit, parse_mode="HTML", reply_markup=mk, disable_web_page_preview=True)
+            return
+        except:
+            pass
+    bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=mk, disable_web_page_preview=True)
+
+def check_member_or_prompt(message_or_call):
+    """
+    Guard function: returns True if user is a member.
+    If not, answers callback (if callback) and displays the Join Group screen, then returns False.
+    """
+    user_id = message_or_call.from_user.id
+    if is_user_member(user_id):
+        return True
+    
+    if hasattr(message_or_call, 'message') and message_or_call.message:
+        call = message_or_call
+        try:
+            bot.answer_callback_query(call.id, f"⚠️ សូមចូលរួមក្រុម {REQUIRED_GROUP} ជាមុនសិន!", show_alert=True)
+        except:
+            pass
+        send_join_required_message(call.message.chat.id, user_id, message_id_to_edit=call.message.message_id)
+    else:
+        send_join_required_message(message_or_call.chat.id, user_id)
+    return False
 
 # ================= ប្រព័ន្ធទិន្នន័យ (Database - Firebase) =================
 try:
@@ -184,10 +279,8 @@ def safe_float(val):
 
 def calculate_sell_price(original_price):
     """Calculate our sell price based on pricing tiers (API price is NEVER shown to user)"""
-    if original_price < 0.5:
-        return round(original_price * 6.0, 2)
-    elif original_price < 1.0:
-        return round(original_price * 3.5, 2)
+    if original_price < 1.0:
+        return round(original_price * 5.0, 2)
     elif original_price < 2.0:
         return round(original_price * 3.0, 2)
     elif original_price < 5.0:
@@ -346,7 +439,7 @@ def build_home_markup(user_id):
         InlineKeyboardButton("🦆 Profile", callback_data="cmd_info")
     )
     mk.row(
-        InlineKeyboardButton("📢 Channel ↗", url="https://t.me/ssonlinechanel"),
+        InlineKeyboardButton("📢 Group ↗", url=get_join_group_url()),
         InlineKeyboardButton("🎧 Admin Support ↗", url="https://t.me/limsorn")
     )
     mk.row(InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"))
@@ -365,16 +458,46 @@ def home_text(user_id, first_name, username):
         f"| {uname:<20} | {balance_str:<12} |\n"
         f"| {str(user_id):<20} | {'':<12} |\n"
         f"</pre>\n"
-        f"📢 ក្រុម: <a href='https://t.me/ssonlinechanel'>@ssonlinechanel</a>\n"
+        f"📢 ក្រុម: <a href='{get_join_group_url()}'>{REQUIRED_GROUP}</a>\n"
         f"🎧 Admin: <a href='https://t.me/limsorn'>@limsorn</a>\n"
         f"Choose an option below 👇"
     )
+
+@bot.callback_query_handler(func=lambda call: call.data == "verify_joined")
+def cb_verify_joined(call):
+    user_id = call.from_user.id
+    _MEMBERSHIP_CACHE.pop(user_id, None)
+    is_mem, reason = check_membership_status(user_id)
+    if is_mem:
+        bot.answer_callback_query(call.id, "✅ ការផ្ទៀងផ្ទាត់ជោគជ័យ! សូមស្វាគមន៍មកកាន់ Store។", show_alert=True)
+        first_name = call.from_user.first_name or "Guest"
+        username = call.from_user.username or ""
+        text = home_text(user_id, first_name, username)
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                  parse_mode="HTML", reply_markup=build_home_markup(user_id))
+        except:
+            bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=build_home_markup(user_id))
+    elif reason == "bot_not_in_group":
+        bot.answer_callback_query(
+            call.id,
+            f"⚠️ Bot មិនទាន់ត្រូវបាន Add ចូលក្នុងក្រុម {REQUIRED_GROUP} ជា Admin នៅឡើយទេ។ សូមទាក់ទង Admin @limsorn!",
+            show_alert=True
+        )
+    else:
+        bot.answer_callback_query(
+            call.id,
+            f"❌ អ្នកមិនទាន់បានចូលរួមក្រុម {REQUIRED_GROUP} នៅឡើយទេ! សូមចុច Join Group រួចចុចផ្ទៀងផ្ទាត់ម្ដងទៀត។",
+            show_alert=True
+        )
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     global COMMANDS_INITIALIZED
     if not COMMANDS_INITIALIZED:
         threading.Thread(target=set_bot_commands, daemon=True).start()
+    if not check_member_or_prompt(message):
+        return
     user_id = message.from_user.id
     first_name = message.from_user.first_name or "Guest"
     username = message.from_user.username or ""
@@ -388,6 +511,8 @@ def send_welcome(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "home")
 def go_home(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     user_id = call.from_user.id
     first_name = call.from_user.first_name or "Guest"
@@ -401,6 +526,8 @@ def go_home(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "menu_offers")
 def cb_offers(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     text = (
         "🎉 <b>Special Offers & Promotions</b>\n\n"
@@ -418,6 +545,8 @@ def cb_offers(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "menu_cart")
 def cb_cart(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     text = (
         "🛒 <b>Your Cart</b>\n\n"
@@ -434,10 +563,14 @@ def cb_cart(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "cart_add")
 def cb_cart_add(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id, "💡 Please use 'Buy Now' for instant delivery!", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data == "menu_api")
 def cb_api(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     text = (
         "⚡ <b>API Integration</b>\n\n"
@@ -454,6 +587,8 @@ def cb_api(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "menu_settings")
 def cb_settings(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     text = (
         "⚙️ <b>Settings</b>\n\n"
@@ -471,9 +606,14 @@ def cb_settings(call):
 
 @bot.message_handler(commands=['myorders', 'myhistory'])
 def cmd_myorders(message):
+    if not check_member_or_prompt(message):
+        return
     show_my_orders_msg(message.chat.id, message.from_user.id)
 
 def show_my_orders_msg(chat_id, user_id, message_id_to_edit=None):
+    if not is_user_member(user_id):
+        send_join_required_message(chat_id, user_id, message_id_to_edit)
+        return
     try:
         ref = rtdb.reference("purchases")
         query = ref.order_by_child("user_id").equal_to(user_id).get()
@@ -512,17 +652,23 @@ def show_my_orders_msg(chat_id, user_id, message_id_to_edit=None):
 
 @bot.callback_query_handler(func=lambda call: call.data == "my_orders")
 def cb_my_orders(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     show_my_orders_msg(call.message.chat.id, call.from_user.id, call.message.message_id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "cmd_info")
 def cb_info(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     call.message.from_user = call.from_user
     show_info(call.message)
 
 @bot.message_handler(commands=['info'])
 def show_info(message):
+    if not check_member_or_prompt(message):
+        return
     user_id = message.from_user.id
     if user_id == ADMIN_ID:
         api_res = call_zoom_api("GET", "/balance")
@@ -551,12 +697,16 @@ def show_info(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "cmd_topup")
 def cb_topup(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     call.message.from_user = call.from_user
     handle_topup(call.message)
 
 @bot.message_handler(commands=['topup'])
 def handle_topup(message):
+    if not check_member_or_prompt(message):
+        return
     user_id = message.from_user.id
     msg = (
         f"🏦 <b>Top Up via Binance Pay / ABA:</b>\n\n"
@@ -576,6 +726,8 @@ def handle_topup(message):
 
 @bot.message_handler(content_types=['photo'])
 def handle_receipt_photo(message):
+    if not check_member_or_prompt(message):
+        return
     user_id = message.from_user.id
     if user_id == ADMIN_ID:
         return
@@ -644,6 +796,9 @@ def get_category_products(cat_id):
     ]
 
 def show_category_view(chat_id, user_id, cat_id, page=0, message_id_to_edit=None):
+    if not is_user_member(user_id):
+        send_join_required_message(chat_id, user_id, message_id_to_edit)
+        return
     cat_info = CATEGORIES.get(str(cat_id), {"title": "Products", "short_title": "Products"})
     cat_products = get_category_products(cat_id)
     if not cat_products:
@@ -721,11 +876,15 @@ def show_category_view(chat_id, user_id, cat_id, page=0, message_id_to_edit=None
 
 @bot.message_handler(commands=['1', '2', '3', '4', '5', '6'])
 def handle_cat_commands(message):
+    if not check_member_or_prompt(message):
+        return
     cat_id = message.text.replace('/', '').strip()
     show_category_view(message.chat.id, message.from_user.id, cat_id, 0)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat_"))
 def cb_cat_pagination(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     raw = call.data.replace("cat_", "")
     parts = raw.split("_p")
@@ -735,6 +894,8 @@ def cb_cat_pagination(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cgrp_"))
 def cb_cat_group(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     raw = call.data.replace("cgrp_", "")
     parts = raw.split("_p")
@@ -890,6 +1051,8 @@ def build_products_markup(groups, page, user_id):
 
 @bot.message_handler(commands=['shop'])
 def show_shop(message):
+    if not check_member_or_prompt(message):
+        return
     user_id = message.from_user.id
     products = get_filtered_products()
     if not products:
@@ -901,6 +1064,8 @@ def show_shop(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("products_p") or call.data.startswith("refresh_p"))
 def cb_products_page(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     is_refresh = call.data.startswith("refresh_p")
     raw = call.data.replace("products_p", "").replace("refresh_p", "")
@@ -924,6 +1089,8 @@ def cb_products_page(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("grp_"))
 def cb_group_view(call):
     """Inside a brand / group page"""
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     raw = call.data.replace("grp_", "")
     parts = raw.split("_p")
@@ -968,6 +1135,8 @@ def cb_group_view(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buyp_"))
 def cb_product_detail(call):
     """Show Zoom Store style product detail page"""
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     raw = call.data.replace("buyp_", "")
     parts = raw.split("_")
@@ -1041,6 +1210,8 @@ def cb_product_detail(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("qtyselect_"))
 def cb_qty_select(call):
     """Quantity selection buttons (1, 2, 3, 5, 10, 15, 20, 25, Custom Amount)"""
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     product_id = call.data.replace("qtyselect_", "")
 
@@ -1089,12 +1260,16 @@ def cb_qty_select(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("customq_"))
 def cb_custom_qty(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     product_id = call.data.replace("customq_", "")
     msg = bot.send_message(call.message.chat.id, "📝 សូមបញ្ចូលចំនួនដែលអ្នកចង់ទិញ (ឧទាហរណ៍: 1, 2, 4...) ៖")
     bot.register_next_step_handler(msg, lambda m: step_custom_qty(m, product_id))
 
 def step_custom_qty(message, product_id):
+    if not check_member_or_prompt(message):
+        return
     try:
         qty = int(message.text.strip())
         if qty <= 0:
@@ -1109,6 +1284,9 @@ def step_custom_qty(message, product_id):
 # ================= PURCHASE CONFIRMATION SCREEN =================
 
 def show_confirmation(chat_id, user_id, product_id, qty, message_id_to_edit=None):
+    if not is_user_member(user_id):
+        send_join_required_message(chat_id, user_id, message_id_to_edit)
+        return
     products = get_filtered_products()
     p = next((x for x in products if str(x.get("id")) == product_id), None)
     if not p:
@@ -1181,6 +1359,8 @@ def show_confirmation(chat_id, user_id, product_id, qty, message_id_to_edit=None
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cfmq_"))
 def cb_confirm_qty(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     raw = call.data.replace("cfmq_", "")
     parts = raw.split("_")
@@ -1192,6 +1372,8 @@ def cb_confirm_qty(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("dopay_"))
 def cb_execute_pay(call):
+    if not check_member_or_prompt(call):
+        return
     bot.answer_callback_query(call.id)
     raw = call.data.replace("dopay_", "")
     parts = raw.split("_")
