@@ -46,7 +46,7 @@ def temp_reply_to(message, text, **kwargs):
 
 # ================= ការត្រួតពិនិត្យសមាជិកភាពក្រុម (Group Membership Verification) =================
 _MEMBERSHIP_CACHE = {}  # {user_id: timestamp}
-_MEMBERSHIP_CACHE_TTL = 300  # Cache 5 នាទីដើម្បីកុំឲ្យ spam Telegram API
+_MEMBERSHIP_CACHE_TTL = 1800  # Cache 30 នាទីដើម្បីឲ្យចុចប៊ូតុងលឿនបំផុត (Instant) និងកុំឲ្យ spam Telegram API
 
 def get_required_chat_id():
     grp = REQUIRED_GROUP
@@ -192,17 +192,30 @@ def log_purchase(user_id, product_id, product_name, sell_price, keys_list, quant
     except Exception as e:
         print(f"log_purchase error: {e}")
 
+_USER_BALANCE_CACHE = {}  # {user_id: (balance, timestamp)}
+_USER_BALANCE_CACHE_TTL = 45  # Cache balance 45 វិនាទី (ធ្វើឲ្យចុចប៊ូតុងចេញភ្លាម Instant 0ms)
+
 def get_user_balance(user_id):
+    if user_id == ADMIN_ID:
+        return 0.0
+    now = time.time()
+    if user_id in _USER_BALANCE_CACHE:
+        bal, ts = _USER_BALANCE_CACHE[user_id]
+        if now - ts < _USER_BALANCE_CACHE_TTL:
+            return bal
     try:
         ref = rtdb.reference(f'users/{user_id}')
         user = ref.get()
         if user and 'balance' in user:
-            return float(user['balance'])
+            bal = float(user['balance'])
+            _USER_BALANCE_CACHE[user_id] = (bal, now)
+            return bal
     except Exception as e:
         print(e)
     return 0.0
 
 def add_user_balance(user_id, amount):
+    _USER_BALANCE_CACHE.pop(user_id, None)
     try:
         ref = rtdb.reference(f'users/{user_id}')
         user = ref.get()
@@ -216,6 +229,7 @@ def add_user_balance(user_id, amount):
         print(e)
 
 def deduct_user_balance(user_id, amount, desc):
+    _USER_BALANCE_CACHE.pop(user_id, None)
     try:
         ref = rtdb.reference(f'users/{user_id}')
         user = ref.get()
@@ -958,8 +972,21 @@ def cb_cat_group(call):
 
 PRODUCTS_CACHE = None
 PRODUCTS_CACHE_TIME = 0
-CACHE_TTL = 90  # រក្សាទុក Cache រយៈពេល 90 វិនាទី (ធ្វើឲ្យចុចប៊ូតុងភ្លាម ចេញភ្លាម Instant)
+CACHE_TTL = 300  # រក្សាទុក Cache រយៈពេល 5 នាទី (ធ្វើឲ្យចុចប៊ូតុងភ្លាម ចេញភ្លាម Instant 0ms)
 CACHE_LOCK = threading.Lock()
+
+def _bg_refresh_products():
+    global PRODUCTS_CACHE, PRODUCTS_CACHE_TIME
+    try:
+        res = call_zoom_api("GET", "/products")
+        products = res.get("products", [])
+        filtered = [p for p in products if safe_float(p.get("price", 0)) < 10.0]
+        if filtered:
+            with CACHE_LOCK:
+                PRODUCTS_CACHE = filtered
+                PRODUCTS_CACHE_TIME = time.time()
+    except Exception as e:
+        print(f"Background products refresh error: {e}")
 
 def get_filtered_products(force_refresh=False):
     """ទាញយកទំនិញតែតម្លៃដើមក្រោម១០ $ ដោយប្រើ Memory Cache ជួយឲ្យ Bot ឆ្លើយតបលឿនបំផុត (Instant)"""
@@ -967,7 +994,11 @@ def get_filtered_products(force_refresh=False):
     now = time.time()
     
     with CACHE_LOCK:
-        if not force_refresh and PRODUCTS_CACHE is not None and (now - PRODUCTS_CACHE_TIME) < CACHE_TTL:
+        if not force_refresh and PRODUCTS_CACHE is not None:
+            if (now - PRODUCTS_CACHE_TIME) < CACHE_TTL:
+                return PRODUCTS_CACHE
+            # Cache ផុតកំណត់តែមានទិន្នន័យចាស់៖ ផ្ដល់ទិន្នន័យភ្លាម (0ms) រួច update តាម background thread!
+            threading.Thread(target=_bg_refresh_products, daemon=True).start()
             return PRODUCTS_CACHE
 
     res = call_zoom_api("GET", "/products")
@@ -1656,7 +1687,8 @@ def getMessage():
         if json_data:
             update = telebot.types.Update.de_json(json_data)
             if update:
-                bot.process_new_updates([update])
+                # ដំណើរការ Update ក្នុង Thread ដោយឡែក ដើម្បីឆ្លើយតប HTTP 200 ទៅ Telegram ភ្លាមៗ (កុំឲ្យយឺត)
+                threading.Thread(target=bot.process_new_updates, args=([update],), daemon=True).start()
     except Exception as e:
         print(f"Update processing error: {e}")
     return "!", 200
@@ -1735,7 +1767,7 @@ def init_background_services():
         ping_url = WEBHOOK_URL.rstrip('/') + '/'
         while True:
             try:
-                time.sleep(540)  # Ping រៀងរាល់ 9 នាទីម្តង
+                time.sleep(240)  # Ping រៀងរាល់ 4 នាទីម្តង (Render sleep ក្រោយ 15 នាទី)
                 requests.get(ping_url, timeout=10)
             except Exception:
                 pass
