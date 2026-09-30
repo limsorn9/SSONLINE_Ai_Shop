@@ -838,9 +838,11 @@ def show_category_view(chat_id, user_id, cat_id, page=0, message_id_to_edit=None
         items = groups[grp_name]
         if len(items) > 1:
             stock = sum(int(p.get("stock", 0) or 0) for p in items)
+            grp_hash = get_group_hash(grp_name)
+            logo = get_product_logo(grp_name)
             mk.row(InlineKeyboardButton(
-                f"🔥 {grp_name} ◇ {len(items)} plans ({stock}) »",
-                callback_data=f"cgrp_{cat_id}_{grp_name[:15]}_p{page}"
+                f"{logo} {grp_name} ◇ {len(items)} plans ({stock}) »",
+                callback_data=f"cgrp_{cat_id}_{grp_hash}_p{page}"
             ))
         else:
             p = items[0]
@@ -848,8 +850,9 @@ def show_category_view(chat_id, user_id, cat_id, page=0, message_id_to_edit=None
             name = p.get("name", "N/A")
             sell = calculate_sell_price(safe_float(p.get("price", 0)))
             stock = p.get("stock", 0)
+            p_logo = get_product_logo(name)
             mk.row(InlineKeyboardButton(
-                f"🔥 {name} | ${sell:.2f} | {stock}",
+                f"{p_logo} {name} | ${sell:.2f} | {stock}",
                 callback_data=f"buyp_{p_id}_c{cat_id}_p{page}"
             ))
 
@@ -902,39 +905,45 @@ def cb_cat_group(call):
     page = int(parts[1]) if len(parts) > 1 else 0
     cat_and_grp = parts[0].split("_", 1)
     cat_id = cat_and_grp[0]
-    grp_name = cat_and_grp[1] if len(cat_and_grp) > 1 else ""
+    grp_key = cat_and_grp[1] if len(cat_and_grp) > 1 else ""
 
     user_id = call.from_user.id
     cat_products = get_category_products(cat_id)
     groups = group_products(cat_products)
 
-    matching_grp = next((g for g in groups.keys() if g.startswith(grp_name) or grp_name in g), None)
+    matching_grp = next((g for g in groups.keys() if get_group_hash(g) == grp_key or g.startswith(grp_key) or grp_key in g), None)
     if not matching_grp:
         bot.answer_callback_query(call.id, "Group not found!", show_alert=True)
         return
 
-    items = sorted(groups[matching_grp], key=lambda x: safe_float(x.get("price", 0)))
+    grp_name = matching_grp
+    items = sorted(groups[grp_name], key=lambda x: safe_float(x.get("price", 0)))
+    grp_hash = get_group_hash(grp_name)
+    logo = get_product_logo(grp_name)
+
     bal = get_user_balance(user_id) if user_id != ADMIN_ID else None
     balance_str = "Admin" if user_id == ADMIN_ID else f"${bal:.2f} USDT"
+    total_stock = sum(int(p.get("stock", 0) or 0) for p in items)
 
     header = (
         f"<blockquote>Pay, and it's yours before you close the app\n"
         f"🏦 Welcome to SSONLINE Store 🏦\n"
         f"💰 Your Balance: {balance_str}\n"
-        f"<b>{matching_grp}</b> ({len(items)} plans)\n"
+        f"{logo} <b>{grp_name}</b> ({len(items)} plans | Stock: {total_stock})\n"
         f"Please select a product below:</blockquote>"
     )
 
     mk = InlineKeyboardMarkup()
-    mk.row(InlineKeyboardButton(f"🛍️ {matching_grp}", callback_data="noop"))
+    mk.row(InlineKeyboardButton(f"{logo} {grp_name} ({len(items)} plans)", callback_data="noop"))
     for p in items:
         p_id = str(p.get("id"))
         name = p.get("name", "N/A")
         sell = calculate_sell_price(safe_float(p.get("price", 0)))
         stock = p.get("stock", 0)
+        p_logo = get_product_logo(name)
         mk.row(InlineKeyboardButton(
-            f"🔥 {name} | ${sell:.2f} | {stock}",
-            callback_data=f"buyp_{p_id}_c{cat_id}_p{page}"
+            f"{p_logo} {name} | ${sell:.2f} | {stock}",
+            callback_data=f"buyp_{p_id}_c{cat_id}_g{grp_hash}_p{page}"
         ))
 
     mk.row(InlineKeyboardButton("🐥 Back to Category", callback_data=f"cat_{cat_id}_p{page}"))
@@ -976,9 +985,16 @@ def group_products(products):
     """Group products by their group field or first word of name"""
     groups = {}
     for p in products:
-        grp = (p.get("group") or p.get("name", "").split()[0]).strip()
+        raw_grp = p.get("group") or p.get("name", "").split()[0]
+        grp = " ".join(raw_grp.strip().split())
         groups.setdefault(grp, []).append(p)
     return groups
+
+def get_group_hash(grp_name):
+    """Generate a stable 8-char hex hash for group callback navigation"""
+    import hashlib
+    clean = " ".join(grp_name.strip().lower().split())
+    return hashlib.md5(clean.encode('utf-8')).hexdigest()[:8]
 
 def get_sorted_group_keys(groups, popularity):
     """Sort group keys by total sold count descending (popular first)"""
@@ -1011,7 +1027,7 @@ def build_products_markup(groups, page, user_id):
 
     for grp_name in page_keys:
         items = groups[grp_name]
-        grp_idx = group_keys.index(grp_name)
+        grp_hash = get_group_hash(grp_name)
         logo = get_product_logo(grp_name)
         sold_total = sum(popularity.get(str(p.get("id", "")), 0) for p in items)
         badge = "🔥 " if sold_total >= 50 else "⭐ " if sold_total >= 10 else ""
@@ -1019,7 +1035,7 @@ def build_products_markup(groups, page, user_id):
             stock = sum(int(p.get("stock", 0) or 0) for p in items)
             mk.row(InlineKeyboardButton(
                 f"{badge}{logo} {grp_name} ◇ {len(items)} plans ({stock}) »",
-                callback_data=f"grp_{grp_idx}_p{page}"
+                callback_data=f"grp_{grp_hash}_p{page}"
             ))
         else:
             p = items[0]
@@ -1094,41 +1110,69 @@ def cb_group_view(call):
     bot.answer_callback_query(call.id)
     raw = call.data.replace("grp_", "")
     parts = raw.split("_p")
-    grp_idx = int(parts[0])
+    target_key = parts[0]
     page = int(parts[1]) if len(parts) > 1 else 0
 
     user_id = call.from_user.id
     products = get_filtered_products()
     groups = group_products(products)
-    group_keys = sorted(groups.keys())
 
-    if grp_idx >= len(group_keys):
-        bot.answer_callback_query(call.id, "Group not found!", show_alert=True)
+    # 1. Match by group hash
+    matching_grp = next((g for g in groups.keys() if get_group_hash(g) == target_key), None)
+
+    # 2. Backward compatibility fallback for index or partial name
+    if not matching_grp:
+        if target_key.isdigit():
+            idx = int(target_key)
+            popularity = get_product_popularity()
+            sorted_keys = get_sorted_group_keys(groups, popularity)
+            if idx < len(sorted_keys):
+                matching_grp = sorted_keys[idx]
+        if not matching_grp:
+            matching_grp = next((g for g in groups.keys() if target_key.lower() in g.lower() or g.lower().startswith(target_key.lower())), None)
+
+    if not matching_grp:
+        bot.answer_callback_query(call.id, "❌ រកមិនឃើញប្រភេទផលិតផលនេះទេ!", show_alert=True)
         return
 
-    grp_name = group_keys[grp_idx]
+    grp_name = matching_grp
     items = sorted(groups[grp_name], key=lambda x: safe_float(x.get("price", 0)))
+    grp_hash = get_group_hash(grp_name)
+    logo = get_product_logo(grp_name)
+
+    bal = get_user_balance(user_id) if user_id != ADMIN_ID else None
+    balance_str = "Admin" if user_id == ADMIN_ID else f"${bal:.2f} USDT"
+    total_stock = sum(int(p.get("stock", 0) or 0) for p in items)
+
+    header = (
+        f"<blockquote>Pay, and it's yours before you close the app\n"
+        f"🏦 Welcome to SSONLINE Store 🏦\n"
+        f"💰 Your Balance: {balance_str}\n"
+        f"{logo} <b>{grp_name}</b> ({len(items)} plans | Stock: {total_stock})\n"
+        f"Please select a product plan below:</blockquote>"
+    )
 
     mk = InlineKeyboardMarkup()
-    mk.row(InlineKeyboardButton(f"🛍️ {grp_name}", callback_data="noop"))
+    mk.row(InlineKeyboardButton(f"{logo} {grp_name} ({len(items)} plans)", callback_data="noop"))
     for p in items:
         p_id = str(p.get("id"))
         name = p.get("name", "N/A")
         sell = calculate_sell_price(safe_float(p.get("price", 0)))
         stock = p.get("stock", 0)
+        p_logo = get_product_logo(name)
         mk.row(InlineKeyboardButton(
-            f"🔥 {name} | ${sell:.2f} | {stock}",
-            callback_data=f"buyp_{p_id}_g{grp_idx}_p{page}"
+            f"{p_logo} {name} | ${sell:.2f} | {stock}",
+            callback_data=f"buyp_{p_id}_g{grp_hash}_p{page}"
         ))
 
     mk.row(InlineKeyboardButton("🐥 Back to Store", callback_data=f"products_p{page}"))
     mk.row(InlineKeyboardButton("🚪 Home", callback_data="home"))
 
     try:
-        bot.edit_message_text(products_header(user_id), call.message.chat.id, call.message.message_id,
+        bot.edit_message_text(header, call.message.chat.id, call.message.message_id,
                               parse_mode="HTML", reply_markup=mk)
     except:
-        bot.send_message(call.message.chat.id, products_header(user_id), parse_mode="HTML", reply_markup=mk)
+        bot.send_message(call.message.chat.id, header, parse_mode="HTML", reply_markup=mk)
 
 # ================= PRODUCT DETAIL PAGE =================
 
@@ -1151,8 +1195,7 @@ def cb_product_detail(call):
             try: back_to_page = int(part[1:])
             except: pass
         elif part.startswith("g"):
-            try: back_to_grp = int(part[1:])
-            except: pass
+            back_to_grp = part[1:]
         elif part.startswith("c"):
             try: back_to_cat = part[1:]
             except: pass
