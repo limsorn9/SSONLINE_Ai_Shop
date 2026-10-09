@@ -3,6 +3,11 @@ from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 import requests
 import os
 import time
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import db as rtdb
@@ -141,11 +146,17 @@ def check_member_or_prompt(message_or_call):
 # ================= ប្រព័ន្ធទិន្នន័យ (Database - Firebase) =================
 try:
     if not firebase_admin._apps:
-        firebase_cred_json = os.environ.get('FIREBASE_CRED_JSON')
-        if firebase_cred_json:
+        firebase_cred_json = os.environ.get('FIREBASE_CRED_JSON', '').strip()
+        if firebase_cred_json and firebase_cred_json.startswith('{'):
             import json
             cred_dict = json.loads(firebase_cred_json)
             cred = credentials.Certificate(cred_dict)
+        elif firebase_cred_json and os.path.exists(firebase_cred_json):
+            cred = credentials.Certificate(firebase_cred_json)
+        elif os.path.exists('firebase_key.json'):
+            cred = credentials.Certificate('firebase_key.json')
+        elif os.path.exists('firebase-key.json'):
+            cred = credentials.Certificate('firebase-key.json')
         else:
             cred = credentials.Certificate('firebase_key.json')
         db_url = os.environ.get('FIREBASE_DATABASE_URL')
@@ -1738,7 +1749,7 @@ def init_background_services():
     """ដំណើរការក្នុង Background មិនឲ្យរំខាន ឬទាញឲ្យ Server ចាប់ផ្តើមយឺតឡើយ"""
     time.sleep(2)  # រង់ចាំ 2 វិនាទីឲ្យ Flask Server ចាប់ផ្តើម listening លើ Port រួចរាល់
     
-    # 1. កំណត់ Webhook បើមាន WEBHOOK_URL
+    # 1. កំណត់ Webhook បើមាន WEBHOOK_URL បើគ្មាន គឺដំណើរការ Polling Mode (ល្អបំផុតសម្រាប់ VPS)
     if WEBHOOK_URL and TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'YOUR_TELEGRAM_TOKEN_HERE':
         try:
             bot.remove_webhook()
@@ -1748,6 +1759,14 @@ def init_background_services():
             print(f"✅ Webhook successfully set to: {WEBHOOK_URL}")
         except Exception as e:
             print(f"❌ set_webhook error: {e}")
+    else:
+        try:
+            bot.remove_webhook()
+            time.sleep(1)
+        except Exception:
+            pass
+        print("🚀 Webhook not set -> Starting Polling Mode on VPS...")
+        threading.Thread(target=lambda: bot.infinity_polling(skip_pending=True), daemon=True).start()
 
     # 2. Update Telegram commands
     try:
@@ -1776,7 +1795,6 @@ def init_background_services():
 threading.Thread(target=init_background_services, daemon=True).start()
 
 if __name__ == '__main__':
-    # យក Port ពី Render (Default 10000 ឬ 5000)
-    port = int(os.environ.get('PORT', 10000))
-    # threaded=True ធានាថា Flask ឆ្លើយតប Health Check របស់ Render ភ្លាមៗ (Instant 200 OK)
+    # យក Port ពី Render ឬ VPS (Default 5001)
+    port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port, threaded=True)
